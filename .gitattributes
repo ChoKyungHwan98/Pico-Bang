@@ -1,2 +1,4 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Unity 프로젝트: 줄바꿈을 변환하지 않고 파일을 그대로 저장한다.
+# (GitHub 기본값 "* text=auto"는 커밋 때 줄바꿈을 LF로 바꿔서,
+#  윈도우 줄바꿈이 섞인 스크립트·에셋이 전부 "변경됨"으로 잡히거나 YAML 병합이 꼬일 수 있다)
+* -text
