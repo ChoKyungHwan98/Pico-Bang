@@ -5,19 +5,22 @@ using UnityEngine;
 using UnityEngine.AI;
 
 /// <summary>
-/// 몬스터 개체 행동. 플랫 FSM — 두 개의 뇌 중 아래쪽.
+/// 몬스터 한 마리의 행동. 플랫 FSM.
 ///
-/// 이 클래스는 <b>한 마리가 무엇을 하는가</b>만 담당한다.
-/// 누구를 어디로 보낼지, 누가 쫓고 누가 매복할지는 <see cref="MonsterDirector"/>(전역 몬스터의 지휘)가 정한다.
-/// 구역 몬스터 4마리는 지휘를 따르는 "눈먼 수족"이다 — 스스로 머리를 쓰지 않고 시킨 대로 움직여서 읽힌다.
+/// 몬스터는 전역 1 + 구역 4. <b>모두 이 같은 FSM을 쓴다.</b> 전역 몬스터의 차이는 넓은 순찰과 좋은 청각뿐이다.
+/// 여러 마리가 어떻게 흩어질지는 <see cref="MonsterDirector"/>(보이지 않는 조정자)가 정하고,
+/// 이 클래스는 명령(수색 / 차단 / 해제)과 목적지만 받아 기존 상태로 수행한다.
 ///
-/// 행동 규칙 (기획 2026-09-11):
-///   평상시              → 구역 순찰
-///   감독 제보 / 소리    → 그 지점까지 추격 속도로 이동 → 주변 수색
-///   플레이어를 직접 봄  → 추격
-///   시야를 놓침         → 마지막으로 본 위치까지 추적 → 주변 수색 → 발견 실패 시 구역 복귀
+/// 행동 규칙 (기획 2026-09-12):
+///   평상시              → 순찰 (구역 몬스터는 자기 구역, 전역 몬스터는 넓게)
+///   플레이어를 직접 봄  → 추격 + 조정자에게 목격 보고 (누가 봤든 포위가 시작된다)
+///   시야를 놓침         → 마지막으로 본 위치로 이동 → 수색 (조정자가 흩어진 수색 지점으로 바꿔 줄 수 있음)
+///   소리를 들음         → "여기서 소리가 났다" — 그 근처로 이동 → 수색 (플레이어 위치로 취급하지 않는다)
+///   (조정자) 차단       → 앞길에 가서 대기, 가까이 오면 덮침
+///   발견 실패           → 복귀 → 순찰
 ///   레이저 피격         → 기절
-///   (감독 지시) 매복    → 플레이어가 가는 쪽으로 앞질러 가서 대기, 가까이 오면 덮침
+///
+/// 정직성 원칙: 플레이어의 현재 위치는 <b>보고 있는 동안에만</b> 쓴다(시야 판정 통과 시).
 /// </summary>
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(Animator))]
@@ -30,6 +33,7 @@ public class MonsterAI : MonoBehaviour
 		Global_Stalker = 1
 	}
 
+	/// <summary>사용하지 않는다. 씬 호환을 위해 남겨 둠 — 모든 몬스터는 "보이면 곧장 쫓기"로 통일(기획: 같은 AI).</summary>
 	public enum ChaseStyle
 	{
 		Blinky_Direct = 0,
@@ -54,6 +58,7 @@ public class MonsterAI : MonoBehaviour
 	[Header("1. Identity & Role")]
 	public MonsterRole role;
 
+	[Tooltip("사용하지 않음. 추격 방식은 전부 같다 — 옆길·앞길 차단은 조정자가 맡는다")]
 	public ChaseStyle style;
 
 	public Transform player;
@@ -74,7 +79,7 @@ public class MonsterAI : MonoBehaviour
 
 	public float patrolWaitTime;
 
-	// 제보·소리를 받고 달려갈 때는 추격 속도(chaseSpeed)를 쓴다 (기획: "빠르게 = 추격 속도와 같게")
+	// 수색 지점·차단 지점으로 달려갈 때는 추격 속도(chaseSpeed)를 쓴다 (기획: "빠르게 = 추격 속도와 같게")
 
 	[Header("3-1. Acceleration")]
 	public float patrolAcceleration = 30f;
@@ -147,68 +152,65 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("아크가 튀는 폭. 몸집에 맞춰 조절")]
 	public float stunArcJaggedness = 0.16f;
 
-	[Header("5-2. Berserk (Rusher 전용)")]
-	public float berserkTriggerRange = 12f;
-
-	public float berserkDuration = 3f;
-
-	[Tooltip("광폭화 시 추격 속도 배율")]
-	public float berserkSpeedScale = 1.5f;
-
-	public float berserkAcceleration = 120f;
-
-	[Header("5-3. Chase Style 세부")]
-	[Tooltip("Pinky: 플레이어 진행 방향으로 몇 초 앞을 노릴 것인가")]
-	public float predictLeadTime = 0.5f;
-
-	[Tooltip("Inky: 플레이어 기준 옆으로 파고드는 거리")]
-	public float flankOffset = 4f;
-
-	[Header("6. 무리 호출 — 무리를 부른 전역 몬스터의 값만 사용됨")]
-	[Tooltip("감독이 무리를 다시 보내는 주기(초). 짧을수록 플레이어를 바짝 따라붙고, 길수록 헛다리를 짚는다")]
-	public float dispatchInterval = 2.5f;
-
-	[Tooltip("플레이어에게서 최소 이만큼 떨어진 지점으로 보낸다")]
-	public float dispatchBlurMin = 6f;
-
-	[Tooltip("플레이어에게서 최대 이만큼 떨어진 지점으로 보낸다. 클수록 흐리다")]
-	public float dispatchBlurMax = 14f;
-
-	[Tooltip("배정된 방향에서 매번 흔들리는 각도(도)")]
-	public float dispatchAngleJitter = 25f;
-
-	[Tooltip("전역 몬스터가 플레이어를 놓친 뒤 호출을 유지하는 시간")]
-	public float callMemory = 6f;
-
-	[Tooltip("플레이어에게서 이보다 먼 개체는 부르지 않는다. 0이면 거리 제한 없음")]
-	public float dispatchRange = 0f;
-
-	[Tooltip("제보를 받으면 제보 지점에서 가장 가까운 구역 몬스터 몇 마리를 보낼 것인가 (기획: 2). 나머지는 순찰 유지")]
-	public int dispatchSquadSize = 2;
-
-	[Header("6-1. 추격 인원 제한 — 전역 몬스터의 값만 사용됨")]
-	[Tooltip("동시에 직접 쫓는 최대 마릿수 (기획: 2). 넘치면 뒤처진 구역 몬스터가 매복으로 돌린다")]
+	[Header("6. 조정자(Director) — 전역 몬스터의 값만 사용됨")]
+	[Tooltip("동시에 직접 쫓는 최대 마릿수. 넘치면 뒤처진 구역 몬스터를 차단으로 돌린다")]
 	public int maxSimultaneousChasers = 2;
 
-	[Tooltip("매복 지점: 플레이어 진행 방향으로 이만큼 앞(m)")]
-	public float interceptLeadDistance = 15f;
+	[Tooltip("작은 포위(구역 몬스터가 발견): 차단 보낼 마릿수")]
+	public int smallHuntCutters = 1;
 
-	[Tooltip("매복 지점을 다시 계산하는 주기(초). 플레이어가 방향을 바꾸면 따라 옮긴다")]
-	public float interceptRefreshInterval = 1.5f;
+	[Tooltip("큰 포위(전역 몬스터가 발견): 차단 보낼 마릿수")]
+	public int largeHuntCutters = 2;
+
+	[Tooltip("차단 후보: 마지막 목격 위치에서 8방향으로 바닥을 따라 최대 이만큼 뻗어 본다(m)")]
+	public float cutCandidateMaxDistance = 18f;
+
+	[Tooltip("차단 후보: 이만큼도 못 가고 막히는 방향은 버린다(m). 복도에서는 양 끝만 남는다")]
+	public float cutCandidateMinDistance = 6f;
+
+	[Tooltip("차단 후보: 서로 이 거리 안이면 하나로 합친다(m)")]
+	public float cutCandidateMergeDistance = 8f;
+
+	[Tooltip("차단 후보: 추격자가 이 거리 안에 있으면 감점 — 같은 자리에 겹치지 않게(m)")]
+	public float cutAvoidChaserRadius = 10f;
+
+	[Tooltip("차단 대기 몬스터가 덮치려 할 때, 가장 먼 추격자보다 이만큼 이상 가까워야 교대한다(m)")]
+	public float swapDistanceMargin = 3f;
+
+	[Tooltip("차단하러 가는 길이 목격 위치 이 반경 안을 지나면 가산점 — 플레이어를 뚫고 앞으로 가지 않게")]
+	public float crossingAvoidRadius = 6f;
+
+	[Tooltip("위 관통 가산점(m 단위 거리로 환산)")]
+	public float crossingPenalty = 25f;
+
+	[Tooltip("놓쳤을 때 수색 지점 분산: 가까운 거리(m)")]
+	public float searchSpreadNear = 8f;
+
+	[Tooltip("놓쳤을 때 수색 지점 분산: 먼 거리(m)")]
+	public float searchSpreadFar = 18f;
+
+	[Tooltip("마지막 목격 후 이 시간이 지나면 사냥 종료(초)")]
+	public float huntMemory = 8f;
+
+	[Tooltip("보이는 동안 차단 배치를 다시 계산하는 주기(초)")]
+	public float layoutRefreshInterval = 1f;
+
+	[Tooltip("목격이 이 시간 끊기면 '놓쳤다'로 보고 수색을 흩어놓는다(초). 한두 프레임 깜빡임 무시용")]
+	public float lostSightGrace = 0.5f;
 
 	[Header("7. Jump (단차 이동)")]
 	public float jumpDuration = 0.5f;
 
 	public float jumpHeight = 1.5f;
 
-	[Header("8. 매복 (감독이 지시)")]
-	[Tooltip("매복 중 플레이어가 이 거리 안에 보이면 덮친다. 멀리서 보고 뛰쳐나가면 추격·매복을 오가며 떨게 된다")]
+	[Header("8. 차단 대기 (조정자가 지시)")]
+	[Tooltip("차단 대기 중 플레이어가 이 거리 안에 보이면 덮친다. 멀리서 보고 뛰쳐나가면 추격·차단을 오가며 떨게 된다")]
 	public float ambushEngageRange = 8f;
 
-	[Tooltip("매복을 이만큼 유지해도 덮치지 못하면 포기하고 복귀한다(초)")]
+	[Tooltip("차단 대기를 이만큼 유지해도 덮치지 못하면 포기하고 복귀한다(초)")]
 	public float interceptTimeout = 12f;
 
-	[Tooltip("추격↔매복 역할이 바뀐 직후 다시 바뀌지 않는 시간(초)")]
+	[Tooltip("추격↔차단 역할이 바뀐 직후 다시 바뀌지 않는 시간(초)")]
 	public float roleLockTime = 2f;
 
 	public static List<MonsterAI> activeMonsters = new List<MonsterAI>();
@@ -223,6 +225,7 @@ public class MonsterAI : MonoBehaviour
 
 	private State stateBeforeStun;
 
+	// 이 몬스터가 "안다고 믿는" 목표 위치: 보고 있던 위치, 들은 소리 위치, 조정자가 준 수색 지점
 	private Vector3 lastKnownPos;
 
 	private static NavMeshTriangulation navMeshData;
@@ -235,15 +238,7 @@ public class MonsterAI : MonoBehaviour
 
 	private float damageTimer;
 
-	private float berserkTimer;
-
 	private bool isJumping;
-
-	private bool isBerserking;
-
-	private Vector3 playerPrevPos;
-
-	private Vector3 playerVelocity;
 
 	private bool isStunned;
 
@@ -251,10 +246,10 @@ public class MonsterAI : MonoBehaviour
 
 	private Quaternion startRotation;
 
-	// 제보·소리·놓친 위치를 향해 추격 속도로 달려가는 중인가. 수색 상태를 벗어나면 꺼진다.
+	// 지점을 향해 추격 속도로 달려가는 중인가. 수색 상태를 벗어나면 꺼진다.
 	private bool isRushing;
 
-	// 매복
+	// 차단 대기
 	private Vector3 interceptPoint;
 	private float interceptTimer;
 	private float roleLockUntil;
@@ -265,9 +260,13 @@ public class MonsterAI : MonoBehaviour
 
 	public bool IsIntercepting => currentState == State.Intercept;
 
-	/// <summary>감독이 이 개체를 추격에서 매복으로 돌려도 되는가. 방금 역할이 바뀌었으면 잠시 보류.</summary>
+	/// <summary>조정자가 이 개체를 추격에서 차단으로 돌려도 되는가. 전역 몬스터는 제외, 방금 역할이 바뀌었으면 보류.</summary>
 	public bool CanBeDemoted =>
 		currentState == State.Chase && role == MonsterRole.Zone_Defender && Time.time >= roleLockUntil;
+
+	/// <summary>조정자의 명령(수색·차단)을 받을 수 있는가. 직접 쫓는 중·기절·점프 중이면 제외.</summary>
+	public bool IsAvailableForOrders =>
+		currentState != State.Chase && currentState != State.Stun && !isJumping;
 
 	/// <summary>AI 테스트 씬 표시용 상태 이름.</summary>
 	public string StateLabel
@@ -282,7 +281,7 @@ public class MonsterAI : MonoBehaviour
 				return (isRushing && !HasArrived()) ? "이동" : "수색";
 			case State.Return: return "복귀";
 			case State.Stun: return "기절";
-			case State.Intercept: return HasArrived() ? "매복 대기" : "매복 이동";
+			case State.Intercept: return HasArrived() ? "차단 대기" : "차단 이동";
 			}
 			return currentState.ToString();
 		}
@@ -297,10 +296,6 @@ public class MonsterAI : MonoBehaviour
 	/// <summary>이 몬스터의 실제 청각 반경. 역할에 따라 달라진다.</summary>
 	public float EffectiveHearingRange =>
 		(role == MonsterRole.Global_Stalker) ? hearingRange : hearingRange * zoneHearingScale;
-
-	/// <summary>감독이 보낼 수 있는 상태인가. 이미 직접 쫓고 있거나 기절 중이면 제외.</summary>
-	public bool CanReceiveDispatch =>
-		currentState != State.Chase && currentState != State.Stun && currentState != State.Intercept && !isJumping;
 
 	private void Awake()
 	{
@@ -343,7 +338,7 @@ public class MonsterAI : MonoBehaviour
 		agent.stoppingDistance = stoppingDistance;
 		ChangeState(State.Patrol);
 
-		// 추격 인원 조율은 사냥(제보)과 무관하게 항상 돌아야 하므로 지휘관을 미리 깨운다
+		// 조정자는 첫 목격 전에도 추격 인원을 세야 하므로 미리 깨운다
 		_ = MonsterDirector.Instance;
 	}
 
@@ -359,12 +354,10 @@ public class MonsterAI : MonoBehaviour
 		base.transform.rotation = startRotation;
 		currentState = State.Patrol;
 		isStunned = false;
-		isBerserking = false;
 		isJumping = false;
 		isRushing = false;
 		roleLockUntil = 0f;
 		damageTimer = 0f;
-		berserkTimer = 0f;
 		if (animator != null)
 		{
 			animator.Rebind();
@@ -383,13 +376,13 @@ public class MonsterAI : MonoBehaviour
 	/// <summary>
 	/// <see cref="NoiseSystem"/>이 호출한다. 들리는지 여부는 여기서 판정한다.
 	///
-	/// 기획: 전역 몬스터는 넓게, 구역 몬스터는 좁게 듣는다.
-	/// 폴리싱: 소리는 <b>정확한 좌표를 알려주지 않는다.</b> 멀리서 난 소리일수록
-	/// 어긋난 지점으로 향한다 — 그래야 플레이어에게 빠져나갈 여지가 생긴다.
+	/// 소리는 <b>"플레이어가 여기 있다"가 아니라 "여기서 소리가 났다"</b>다.
+	/// 조정자의 목격 기록에는 넣지 않고, 들은 몬스터만 그 근처로 확인하러 간다.
+	/// 멀리서 난 소리일수록 어긋난 지점으로 향한다 — 그래야 플레이어에게 빠져나갈 여지가 생긴다.
 	/// </summary>
 	public void OnHearNoise(Vector3 soundPosition, float noiseRadius, NoiseKind kind)
 	{
-		// 쫓는 중·매복 중에는 소리에 한눈팔지 않는다 (시킨 일만 한다)
+		// 쫓는 중·차단 중에는 소리에 한눈팔지 않는다 (시킨 일만 한다)
 		if (currentState == State.Chase || currentState == State.Intercept || isStunned)
 		{
 			return;
@@ -430,10 +423,8 @@ public class MonsterAI : MonoBehaviour
 	}
 
 	/// <summary>
-	/// 소리를 듣거나 감독의 호출을 받아 한 지점으로 달려간다.
-	///
-	/// 이미 수색 중이어도 새 지점으로 갱신해야 한다. <see cref="ChangeState"/>는 같은 상태로의
-	/// 전환을 무시하므로, 그대로 두면 호출을 연달아 받아도 첫 지점에 머문다.
+	/// 한 지점으로 추격 속도로 달려가 수색한다.
+	/// 이미 수색 중이어도 새 지점으로 갱신해야 한다 — <see cref="ChangeState"/>는 같은 상태로의 전환을 무시한다.
 	/// </summary>
 	private void RushToInvestigate(Vector3 position)
 	{
@@ -448,6 +439,44 @@ public class MonsterAI : MonoBehaviour
 			ChangeState(State.Investigate);
 		}
 		isRushing = true;
+	}
+
+	// ────────────────────────────────────────────────
+	//  조정자(Director)의 명령 — 목적지만 받아 기존 상태로 수행한다
+	// ────────────────────────────────────────────────
+
+	/// <summary>
+	/// 수색 명령: 그 지점으로 가서 둘러본다.
+	/// 조정자가 "아무도 못 보고 있다"고 판단했을 때 내리므로, 추격 중(기억으로 쫓는 중)이어도 받는다.
+	/// </summary>
+	public void CommandSearch(Vector3 point)
+	{
+		if (isStunned) { return; }
+		RushToInvestigate(point);
+	}
+
+	/// <summary>차단 명령: 앞길 지점으로 가서 기다린다. 이미 차단 중이면 지점만 옮긴다.</summary>
+	public void CommandAmbush(Vector3 point)
+	{
+		if (isStunned) { return; }
+		interceptPoint = point;
+		if (currentState == State.Intercept)
+		{
+			agent.SetDestination(point);
+			return;
+		}
+		interceptTimer = interceptTimeout;
+		roleLockUntil = Time.time + roleLockTime;
+		ChangeState(State.Intercept);
+	}
+
+	/// <summary>해제 명령: 사냥이 끝났다 — 차단·수색을 멈추고 구역으로 돌아간다. 직접 쫓는 중이면 무시.</summary>
+	public void CommandRelease()
+	{
+		if (currentState == State.Intercept || currentState == State.Investigate)
+		{
+			ChangeState(IsOutsideZone() ? State.Return : State.Patrol);
+		}
 	}
 
 	// ────────────────────────────────────────────────
@@ -471,44 +500,37 @@ public class MonsterAI : MonoBehaviour
 			agent.isStopped = false;
 		}
 		HandlePhysicsAndTimers();
-		if (player != null && Time.deltaTime > 0f)
-		{
-			playerVelocity = (player.position - playerPrevPos) / Time.deltaTime;
-			playerPrevPos = player.position;
-		}
 		if (currentState == State.Stun)
 		{
 			return;
 		}
-		if (!isBerserking)
+		switch (currentState)
 		{
-			switch (currentState)
-			{
-			case State.Patrol:
-				agent.speed = patrolSpeed;
-				agent.acceleration = patrolAcceleration;
-				break;
-			case State.Chase:
-				agent.speed = chaseSpeed;
-				agent.acceleration = chaseAcceleration;
-				break;
-			case State.Investigate:
-				// 제보·소리·놓친 위치로 달려가는 동안은 추격 속도
-				agent.speed = isRushing ? chaseSpeed : investigateSpeed;
-				agent.acceleration = isRushing ? chaseAcceleration : investigateAcceleration;
-				break;
-			case State.Return:
-				agent.speed = patrolSpeed;
-				agent.acceleration = patrolAcceleration;
-				break;
-			case State.Intercept:
-				// 앞질러 가야 하므로 추격 속도
-				agent.speed = chaseSpeed;
-				agent.acceleration = chaseAcceleration;
-				break;
-			}
+		case State.Patrol:
+		case State.Return:
+			agent.speed = patrolSpeed;
+			agent.acceleration = patrolAcceleration;
+			break;
+		case State.Chase:
+		case State.Intercept:
+			agent.speed = chaseSpeed;
+			agent.acceleration = chaseAcceleration;
+			break;
+		case State.Investigate:
+			agent.speed = isRushing ? chaseSpeed : investigateSpeed;
+			agent.acceleration = isRushing ? chaseAcceleration : investigateAcceleration;
+			break;
 		}
+
 		bool canSee = player != null && CheckSight();
+
+		// 보고 있으면 누구든 조정자에게 보고한다 — 이것이 조정자가 아는 유일한 플레이어 정보다
+		if (canSee)
+		{
+			MonsterDirector director = MonsterDirector.Instance;
+			if (director != null) { director.ReportSighting(this, player.position); }
+		}
+
 		switch (currentState)
 		{
 		case State.Intercept:
@@ -551,7 +573,6 @@ public class MonsterAI : MonoBehaviour
 		}
 
 		// 찌리리 — 굳어 있는 동안만 전기가 흐른다.
-		// 회복 구간까지 끌면 "언제 다시 움직이는지"가 안 읽힌다.
 		if (showStunSparks)
 		{
 			StunSparkEffect.Play(base.transform, stunFreezeTime,
@@ -570,6 +591,7 @@ public class MonsterAI : MonoBehaviour
 		}
 		else if (stateBeforeStun == State.Chase)
 		{
+			// 맞은 순간 쏜 방향은 알 수 있다 — 그 자리를 확인하러 간다
 			lastKnownPos = shooterPosition;
 		}
 		yield return new WaitForSeconds(stunRecoverTime);
@@ -578,13 +600,12 @@ public class MonsterAI : MonoBehaviour
 		isStunned = false;
 		if (stateBeforeStun == State.Chase)
 		{
-			// 쏜 자리(마지막으로 안 위치)까지 추격 속도로 추적 → 수색
 			ChangeState(State.Investigate);
 			isRushing = true;
 		}
 		else if (CheckSight())
 		{
-			StartChase();
+			TryStartChase();
 		}
 		else
 		{
@@ -596,7 +617,7 @@ public class MonsterAI : MonoBehaviour
 	{
 		if (canSee)
 		{
-			StartChase();
+			TryStartChase();
 		}
 		else
 		{
@@ -621,35 +642,24 @@ public class MonsterAI : MonoBehaviour
 
 	private void ProcessChase(bool canSee)
 	{
-		if (player != null && Vector3.Distance(base.transform.position, player.position) > giveUpRange)
-		{
-			ChangeState(State.Return);
-			return;
-		}
 		if (canSee)
 		{
+			// 보고 있는 동안에만 현재 위치를 안다 — 곧장 쫓는다 (모든 몬스터 동일)
 			lastKnownPos = player.position;
 			memoryTimer = memoryTime;
-
-			// 전역 몬스터는 보고 있는 동안 계속 지휘관에게 보고한다.
-			// 실제 호출·대형 유지는 MonsterDirector가 결정한다.
-			if (role == MonsterRole.Global_Stalker && MonsterDirector.Instance != null)
+			if (Vector3.Distance(base.transform.position, player.position) > giveUpRange)
 			{
-				MonsterDirector.Instance.ReportSpotted(this, player);
+				ChangeState(State.Return);
+				return;
 			}
-
-			if (style == ChaseStyle.Rusher_Berserk)
-			{
-				CheckBerserk();
-			}
-			MoveByStyle(player.position);
+			agent.SetDestination(player.position);
 		}
 		else
 		{
+			// 놓쳤다: 마지막으로 본 위치까지만 간다. 진짜 현재 위치는 모른다
 			memoryTimer -= Time.deltaTime;
 			if (!(memoryTimer > 0f))
 			{
-				// 마지막으로 본 위치까지 추격 속도로 가서 수색
 				ChangeState(State.Investigate);
 				isRushing = true;
 				return;
@@ -666,7 +676,7 @@ public class MonsterAI : MonoBehaviour
 	{
 		if (canSee)
 		{
-			StartChase();
+			TryStartChase();
 		}
 		else if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance)
 		{
@@ -692,59 +702,39 @@ public class MonsterAI : MonoBehaviour
 			&& agent.remainingDistance <= agent.stoppingDistance + 0.5f;
 	}
 
-	// ────────────────────────────────────────────────
-	//  매복 (MonsterDirector가 지시)
-	// ────────────────────────────────────────────────
-
 	/// <summary>
-	/// 추격에서 빠져 플레이어가 가는 쪽으로 앞질러 간다.
-	/// 기획: 동시에 쫓는 건 최대 2마리. 셋째부터는 줄줄이 따라가지 않고 앞에서 기다린다.
+	/// 차단 대기. 지점에 가서 기다린다.
+	/// 기다리는 동안 플레이어를 봐도 멀면 자리를 지키고(보고만 한다), 가까이 오면 덮친다.
 	/// </summary>
-	public void BeginIntercept(Vector3 point)
-	{
-		if (isStunned) { return; }
-		interceptPoint = point;
-		interceptTimer = interceptTimeout;
-		roleLockUntil = Time.time + roleLockTime;
-		ChangeState(State.Intercept);
-	}
-
-	/// <summary>플레이어가 방향을 바꾸면 매복 지점을 옮긴다.</summary>
-	public void UpdateInterceptPoint(Vector3 point)
-	{
-		if (currentState != State.Intercept) { return; }
-		interceptPoint = point;
-		agent.SetDestination(point);
-	}
-
-	/// <summary>쫓던 무리가 모두 놓쳤다 — 매복을 풀고 구역으로 돌아간다.</summary>
-	public void EndIntercept()
-	{
-		if (currentState != State.Intercept) { return; }
-		ChangeState(IsOutsideZone() ? State.Return : State.Patrol);
-	}
-
 	private void ProcessIntercept(bool canSee)
 	{
-		if (canSee && player != null
-			&& Vector3.Distance(base.transform.position, player.position) <= ambushEngageRange)
+		if (canSee && Vector3.Distance(base.transform.position, player.position) <= ambushEngageRange)
 		{
-			// 덮친다. 쫓는 수가 셋이 되면 감독이 가장 뒤처진 개체를 대신 매복으로 돌린다
+			// 덮치기도 허가제: 추격자가 가득 차 있으면 조정자가 교대 여부를 정하고, 아니면 자리를 지킨다
 			lastKnownPos = player.position;
 			memoryTimer = memoryTime;
-			StartChase();
-			return;
+			if (TryStartChase())
+			{
+				return;
+			}
 		}
 
-		// 도착했으면 플레이어 쪽을 보고 기다린다
-		if (HasArrived() && player != null)
+		if (HasArrived())
 		{
-			Vector3 look = player.position - base.transform.position;
-			look.y = 0f;
-			if (look.sqrMagnitude > 0.01f)
+			// 보이면 그쪽을, 안 보이면 차단 지점을 향한 채(오던 방향 반대) 기다린다
+			if (canSee)
 			{
-				base.transform.rotation = Quaternion.Slerp(base.transform.rotation,
-					Quaternion.LookRotation(look), Time.deltaTime * 6f);
+				Vector3 look = player.position - base.transform.position;
+				look.y = 0f;
+				if (look.sqrMagnitude > 0.01f)
+				{
+					base.transform.rotation = Quaternion.Slerp(base.transform.rotation,
+						Quaternion.LookRotation(look), Time.deltaTime * 6f);
+				}
+			}
+			else
+			{
+				base.transform.Rotate(Vector3.up, investigateTurnSpeed * 0.5f * Time.deltaTime);
 			}
 		}
 
@@ -759,7 +749,7 @@ public class MonsterAI : MonoBehaviour
 	{
 		if (canSee)
 		{
-			StartChase();
+			TryStartChase();
 			return;
 		}
 		if (useGlobalNavMesh)
@@ -859,10 +849,25 @@ public class MonsterAI : MonoBehaviour
 	{
 		if (currentState != State.Chase)
 		{
-			// 막 추격을 시작한 개체를 곧바로 매복으로 돌리지 않도록
+			// 막 추격을 시작한 개체를 곧바로 차단으로 돌리지 않도록
 			roleLockUntil = Time.time + roleLockTime;
 		}
 		ChangeState(State.Chase);
+	}
+
+	/// <summary>
+	/// 추격 허가를 받고 들어간다. 동시에 쫓는 수가 가득 차 있으면 조정자가 거부하고
+	/// 곧바로 아직 안 막힌 길로 차단 명령을 내린다 — 추격 상태를 거치지 않으므로 한 순간도 초과되지 않는다.
+	/// </summary>
+	private bool TryStartChase()
+	{
+		MonsterDirector director = MonsterDirector.Instance;
+		if (director != null && !director.RequestChase(this))
+		{
+			return false;
+		}
+		StartChase();
+		return true;
 	}
 
 	private bool CheckSight()
@@ -889,84 +894,16 @@ public class MonsterAI : MonoBehaviour
 		return true;
 	}
 
-	/// <summary>감독이 흐린 지점으로 보낼 때 쓴다. 이미 쫓고 있거나 매복·기절 중이면 무시한다.</summary>
-	public void ReceiveSignal(Vector3 signalPos)
-	{
-		if (currentState != State.Chase && currentState != State.Stun && currentState != State.Intercept)
-		{
-			RushToInvestigate(signalPos);
-		}
-	}
-
-	private void MoveByStyle(Vector3 target)
-	{
-		if (isBerserking)
-		{
-			agent.SetDestination(target);
-			return;
-		}
-		Vector3 destination = target;
-		switch (style)
-		{
-		case ChaseStyle.Pinky_Predict:
-			// 플레이어가 가고 있는 쪽 앞을 노린다
-			destination = target + playerVelocity * predictLeadTime;
-			break;
-		case ChaseStyle.Inky_Tactical:
-			// 플레이어 기준 측면으로 파고든다 (몬스터 기준이 아님)
-			{
-				Vector3 side = Vector3.Cross(Vector3.up, playerVelocity.sqrMagnitude > 0.1f
-					? playerVelocity.normalized
-					: (target - base.transform.position).normalized);
-				float sign = (Vector3.Dot(side, base.transform.position - target) >= 0f) ? 1f : -1f;
-				destination = target + side * (flankOffset * sign);
-			}
-			break;
-		}
-		agent.SetDestination(destination);
-	}
-
 	private void HandlePhysicsAndTimers()
 	{
 		if (damageTimer > 0f)
 		{
 			damageTimer -= Time.deltaTime;
 		}
-		if (isBerserking)
-		{
-			berserkTimer -= Time.deltaTime;
-			if (berserkTimer <= 0f)
-			{
-				EndBerserk();
-			}
-		}
 		if (currentState != State.Stun && !isJumping && agent.isOnOffMeshLink)
 		{
 			StartCoroutine(PerformJump());
 		}
-	}
-
-	private void CheckBerserk()
-	{
-		if (!isBerserking && !(damageTimer > 0f) && Vector3.Distance(base.transform.position, player.position) < berserkTriggerRange)
-		{
-			StartBerserk();
-		}
-	}
-
-	private void StartBerserk()
-	{
-		isBerserking = true;
-		agent.speed = chaseSpeed * berserkSpeedScale;
-		agent.acceleration = berserkAcceleration;
-		berserkTimer = berserkDuration;
-	}
-
-	private void EndBerserk()
-	{
-		isBerserking = false;
-		agent.speed = chaseSpeed;
-		agent.acceleration = chaseAcceleration;
 	}
 
 	private IEnumerator PerformJump()
