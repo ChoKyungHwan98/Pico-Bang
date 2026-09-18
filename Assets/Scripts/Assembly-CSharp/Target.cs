@@ -33,6 +33,17 @@ public class Target : MonoBehaviour
 
 	public void OnHit()
 	{
+		ResolveHit(false, Vector3.zero, 0f);
+	}
+
+	/// <summary>플레이어 사격으로 맞았을 때. 최초 파괴 시 발사 순간 위치를 무리 경보로 전달한다.</summary>
+	public void OnHit(Vector3 shotPosition, float shotTime)
+	{
+		ResolveHit(true, shotPosition, shotTime);
+	}
+
+	private void ResolveHit(bool hasShotContext, Vector3 shotPosition, float shotTime)
+	{
 		// 발사체가 날아오는 사이 두 번 맞을 수 있다
 		if (isDestroyed) { return; }
 		isDestroyed = true;
@@ -45,6 +56,11 @@ public class Target : MonoBehaviour
 		// 파괴음은 과녁 자리에서 난다 — 플레이어 위치가 아니다.
 		// 덕분에 "멀리 있는 과녁을 쏴서 몬스터를 유인한다"는 수가 성립한다.
 		NoiseSystem.Emit(base.transform.position, destroyNoiseRadius, NoiseKind.TargetDestroyed);
+		if (hasShotContext)
+		{
+			MonsterDirector director = MonsterDirector.Instance;
+			if (director != null) { director.ReportTargetAlarm(shotPosition, shotTime); }
+		}
 
 		if (hitEffectPrefab != null)
 		{

@@ -60596,7 +60596,7 @@ MonoBehaviour:
   role: 1
   style: 0
   player: {fileID: 0}
-  useGlobalNavMesh: 0
+  useGlobalNavMesh: 1
   zoneCenter: {fileID: 1408}
   zoneRadius: 200
   patrolSpeed: 8
@@ -60616,7 +60616,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 140
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
   investigateLookTime: 3
   investigateTurnSpeed: 120
@@ -61228,7 +61228,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
   investigateLookTime: 3
   investigateTurnSpeed: 120
@@ -61315,7 +61315,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
   investigateLookTime: 3
   investigateTurnSpeed: 120
@@ -62248,7 +62248,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
   investigateLookTime: 3
   investigateTurnSpeed: 120
@@ -62335,7 +62335,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
   investigateLookTime: 3
   investigateTurnSpeed: 120
@@ -62485,7 +62485,7 @@ MonoBehaviour:
   impactBurstColor: {r: 0.6, g: 0.92, b: 1, a: 1}
   zapSound: {fileID: 8300000, guid: 7dd526e104c47ea47930895d64257b32, type: 3}
   hitSound: {fileID: 8300000, guid: 9fae1bb5246f9f5438e164676ec675b3, type: 3}
-  shotNoiseRadius: 30
+  shotNoiseRadius: 50
   firePoint: {fileID: 1396}
   fireAction: {fileID: 11400000, guid: 58dce9769b7f0ac40a406a5391f84c17, type: 2}
 --- !u!114 &2460

@@ -3,24 +3,20 @@ using UnityEngine;
 using UnityEngine.AI;
 
 /// <summary>
-/// 조정자(Director) — 몬스터가 아니라 뒤에서 몬스터들이 한곳에 몰리지 않게 조정하는 보이지 않는 시스템.
+/// 조정자(Director) — 몬스터가 아니라 뒤에서 무리를 움직이는 보이지 않는 "두 번째 뇌".
 ///
-/// 설계 목표 (기획 2026-09-12):
-///   "플레이어를 최단거리로 잡는 AI"가 아니라 <b>"플레이어가 갈 수 있는 안전한 길을 점점 줄이는 AI"</b>.
+/// 기획 (2026-09-14 확정):
+///   - 이 게임에 숨기는 없다. 플레이어는 <b>달려서만</b> 피한다. 목표는 "포위망이 닫히기 전에 빠져나가기".
+///   - <b>감독은 플레이어의 진짜 위치를 안다.</b> 대신 정보는 한 방향으로만 흐른다:
+///     감독 → 몬스터에게는 <b>흐린 목적지</b>만 내려보낸다. 몬스터는 자기 눈에 보일 때만 정확한 위치로 쫓는다.
+///   - 누가 발견하든 <b>사냥 팀은 3마리</b>(발견자 포함). 나머지는 평소대로 순찰.
+///     발견자(추격) 1 + 가까운 2마리(차단). 탈출로 4개 중 3개를 막고 1개를 열어두는 느낌.
+///   - 차단 몬스터는 뒤를 따라가지 않는다. 플레이어가 향하는 쪽 길을 <b>각자 다른 길로 돌아서</b> 막는다.
+///   - 사냥 중 더 가까운 몬스터가 생기면 가장 먼 차단 팀원과 교대한다(플레이어가 도망친 쪽 구역 몬스터가 앞길로 올라온다).
+///   - 속도는 거리에 따라: 가까우면 플레이어(11)보다 약간 느리게(10), 멀면 빠르게(최대 14). 똑바로 달리면 항상 떨칠 수 있다.
+///   - 추격자는 모퉁이를 돌아도 바로 수색하지 않고 감독의 흐린 힌트로 <b>끈질김 시간</b>만큼 더 쫓는다(MonsterAI).
+///   - 직접 추격은 최대 2마리. 같은 방향으로 붙어 가는 줄줄이는 계속 끊는다.
 ///
-/// 핵심 규칙
-///   1. <b>조정자는 플레이어를 직접 보지 않는다.</b> 몬스터가 보고한 목격 기록만 안다.
-///      보고 있는 동안에는 기록이 계속 갱신되고, 놓치는 순간 마지막 값으로 멈춘다.
-///      (소리는 목격 기록이 아니다 — "여기서 소리가 났다"일 뿐)
-///   2. 전역이든 구역이든 <b>누가 발견해도 포위가 시작된다.</b>
-///      구역 몬스터 발견 → 작은 포위 / 전역 몬스터 발견 → 큰 포위 (사냥 중 전역이 보면 격상)
-///   3. <b>직접 추격은 허가제, 최대 N마리</b>(기본 2). 가득 차 있으면 추격에 들어가기 전에 곧바로 차단으로 보낸다.
-///   4. 차단 = <b>아직 막히지 않은 길</b>에 서 있기. 마지막 목격 위치에서 8방향으로 뻗은 길 중
-///      추격자·다른 차단 몬스터가 오는 방향과 먼 길을 고른다. 복도에서 정면으로 달리면 복도 반대쪽 끝(뒤)이 뽑힌다.
-///   5. 놓치면 마지막 목격 위치 한 점으로 몰리지 않게 <b>수색 지점을 흩어놓는다</b>(이동 방향 쪽을 더 의심).
-///   6. 마지막 목격 후 일정 시간이 지나면 사냥 종료 → 참여자 해제(복귀).
-///
-/// 별도 역할(Flanker/Blocker) 시스템은 없다. 몬스터 FSM에 명령(수색·차단·해제)과 목적지만 준다.
 /// 씬에 배치할 필요 없음 — 첫 호출 시 자동 생성. 수치는 전역 몬스터 인스펙터 "6. 조정자" 칸을 따른다.
 /// </summary>
 public class MonsterDirector : MonoBehaviour
@@ -42,60 +38,113 @@ public class MonsterDirector : MonoBehaviour
         }
     }
 
-    private enum OrderKind { Cut, Search }
-
     /// <summary>차단 후보 한 길. AI 테스트 씬에 그대로 그린다.</summary>
     public struct CutCandidate
     {
-        public Vector3 point;       // 그 방향으로 바닥을 따라 가다 막히는 곳(최대 거리)
-        public Vector3 direction;   // 목격 위치 → point
-        public float reach;         // 목격 위치에서 point까지 거리
-        public float score;
+        public Vector3 point;       // 그 방향으로 바닥을 따라 가다 막히는 곳
+        public Vector3 direction;   // 플레이어 → point
+        public float reach;
+        public float score;         // 이미 막힌 방향과 멀수록, 플레이어가 향하는 쪽일수록 높다
         public bool rejected;       // 너무 짧게 막혀 버려진 방향(벽·막다른 곳)
         public bool chosen;
+        public string note;
     }
 
-    // ── 목격 기록 (공유 정보) ──
+    // ── 감독만 아는 진짜 정보 (몬스터에게 그대로 넘기지 않는다) ──
+    private Transform player;
+    private Vector3 playerPos;
+    private Vector3 playerVelocity;
+    private Vector3 prevPlayerPos;
+    private bool hasPrevPlayerPos;
+
+    // ── 마지막 목격 (표시 + 사냥 종료 판단) ──
     private bool hasSighting;
     private Vector3 sightPosition;
+    private Vector3 sightVelocity;
     private float sightTime;
-    private Vector3 sightVelocity;        // 목격이 이어지는 동안만 갱신, 끊기면 동결
     private MonsterAI sightSpotter;
 
-    // ── 사냥 ──
+    // ── 사냥 팀 ──
     private bool hunting;
-    private bool largeHunt;
-    private bool searchIssued;            // 이번 시야 상실에 대해 수색 분산을 이미 내렸는가
-    private float nextLayoutTime;
-    private float nextCoordinateTime;
-
-    private readonly Dictionary<MonsterAI, Vector3> orderPoints = new Dictionary<MonsterAI, Vector3>();
-    private readonly Dictionary<MonsterAI, OrderKind> orderKinds = new Dictionary<MonsterAI, OrderKind>();
-    private readonly HashSet<MonsterAI> demoted = new HashSet<MonsterAI>();   // 추격 인원이 차서 차단으로 보낸 개체
+    private readonly List<MonsterAI> team = new List<MonsterAI>();
+    private readonly Dictionary<MonsterAI, Vector3> cutPoints = new Dictionary<MonsterAI, Vector3>();
+    private readonly Dictionary<MonsterAI, Vector3> cutWaypoints = new Dictionary<MonsterAI, Vector3>();   // 빙 돌아가는 경유 지점
+    private readonly Dictionary<MonsterAI, float> rejoinBlockedUntil = new Dictionary<MonsterAI, float>();
+    private readonly Dictionary<MonsterAI, Vector3> blurOffsets = new Dictionary<MonsterAI, Vector3>();
+    private readonly Dictionary<MonsterAI, float> blurRefreshAt = new Dictionary<MonsterAI, float>();
     private readonly List<MonsterAI> chasers = new List<MonsterAI>();
     private readonly List<CutCandidate> lastCandidates = new List<CutCandidate>();
+    private Vector3 candidateOrigin;
     private NavMeshPath pathBuffer;
+    private float nextCoordinateTime;
+    private float nextLayoutTime;
+    private float nextTeamReviewTime;
+
+    // ── 흩어짐(팩맨 스캐터) · 인계 · 복귀 ──
+    private float huntPhaseStart;        // 지금 "조이기" 구간이 시작된 시각
+    private float scatterUntil;          // 이 시각까지 흩어짐
+    private int scatterCount;
+    private int handovers;
+    private int teleports;
+    private float chaserOutOfZoneSince;
+    private readonly Dictionary<MonsterAI, float> unseenSince = new Dictionary<MonsterAI, float>();
+    private readonly List<Vector3> searchedSpots = new List<Vector3>();   // 이미 뒤진 곳 — 서로 공유
+    private bool searchIssued;
+
+    // ── 줄줄이 감지 ──
+    private readonly Dictionary<MonsterAI, float> followTimers = new Dictionary<MonsterAI, float>();
+    private readonly Dictionary<MonsterAI, float> followCooldownUntil = new Dictionary<MonsterAI, float>();
+    private int followBreaks;
+    private string layoutSummary = "";
 
     private const float CoordinateInterval = 0.25f;
-    private const float ContinuousSightWindow = 0.3f;   // 이 안에 다시 보고되면 "이어진 목격"으로 보고 방향을 갱신
-    private const float MovingSpeedThreshold = 1.5f;    // 이보다 느리면 "멈춰 있음"
+    private const float TeamReviewInterval = 2f;
+    private const float RejoinBlockTime = 5f;           // 팀에서 빠진 개체는 이 시간 동안 다시 부르지 않는다(들락날락 방지)
+    private const float BlurRefreshTime = 4f;           // 흐림 방향을 바꾸는 주기 — 매번 바꾸면 몬스터가 흔들린다
+    private const float MovingSpeedThreshold = 1.5f;
+    private const float FollowMinSpeed = 2f;
+    private const float FollowLateral = 3f;
+    private const float FollowCooldown = 3f;
+    private const float OverlapSampleStep = 2f;
+    private const float OverlapNearDistance = 3f;
+    private const float InfoGrace = 0.5f;                // 누군가 이 시간 안에 봤으면 정보가 살아 있다
+    private const float SearchNear = 8f;                 // 수색 분산: 가까운 지점 거리
+    private const float SearchFar = 18f;                 // 수색 분산: 먼 지점 거리
+    private const float StopShortDistance = 20f;        // 알맞은 길이 없을 때: 자기 쪽 길에서 플레이어 이 거리 앞까지 다가간다
+
+    // 차단 배정 비용 가중치
+    private const float LengthWeight = 0.3f;            // 경로 1m당
+    private const float AngleWeight = 20f;              // 각도 점수(0~1.5)
+    private const float CrossingPenalty = 30f;          // 플레이어를 뚫고 가는 길
+    private const float OverlapPenalty = 25f;           // 다른 팀원 길과 겹치는 비율 × 이 값
+    private const float KeepBonus = 8f;                 // 지금 가던 지점이면 우대(우왕좌왕 방지)
 
     // ── AI 테스트 씬 표시용 ──
     public bool IsHunting => hunting;
-    public bool IsLargeHunt => largeHunt;
     public bool HasSighting => hasSighting;
     public Vector3 SightingPosition => sightPosition;
     public float SightingAge => Time.time - sightTime;
-    public Vector3 SightingDirection => (sightVelocity.magnitude > MovingSpeedThreshold) ? sightVelocity.normalized : Vector3.zero;
+    public Vector3 SightingDirection => sightVelocity.magnitude > MovingSpeedThreshold ? sightVelocity.normalized : Vector3.zero;
     public string SightingSpotterName => sightSpotter != null ? sightSpotter.name : "-";
     public int DebugChaserCount => chasers.Count;
-    public IReadOnlyDictionary<MonsterAI, Vector3> DebugOrderPoints => orderPoints;
+    public IReadOnlyList<MonsterAI> DebugTeam => team;
+    public IReadOnlyDictionary<MonsterAI, Vector3> DebugOrderPoints => cutPoints;
+    public IReadOnlyDictionary<MonsterAI, Vector3> DebugWaypoints => cutWaypoints;
     public IReadOnlyList<CutCandidate> DebugCutCandidates => lastCandidates;
+    public Vector3 DebugCandidateOrigin => candidateOrigin;
+    public int DebugFollowBreaks => followBreaks;
+    public bool IsScattering => Time.time < scatterUntil;
+    public float ScatterRemaining => Mathf.Max(0f, scatterUntil - Time.time);
+    public float HuntPhaseElapsed => hunting ? Time.time - huntPhaseStart : 0f;
+    public int DebugScatterCount => scatterCount;
+    public int DebugHandovers => handovers;
+    public int DebugTeleports => teleports;
+    public string DebugLayoutSummary => layoutSummary;
 
     public string DebugOrderLabel(MonsterAI m)
     {
-        if (m == null || !orderKinds.TryGetValue(m, out OrderKind k)) { return ""; }
-        return k == OrderKind.Cut ? "차단" : "수색";
+        if (m == null || !team.Contains(m)) { return ""; }
+        return cutPoints.ContainsKey(m) ? "팀·차단" : "팀";
     }
 
     private void Awake()
@@ -106,78 +155,85 @@ public class MonsterDirector : MonoBehaviour
 
     private void OnApplicationQuit() { isQuitting = true; }
 
-    /// <summary>게임 재시작 등으로 사냥을 강제 종료하고 목격 기록도 지운다.</summary>
+    /// <summary>게임 재시작 등으로 사냥을 강제 종료하고 기록도 지운다.</summary>
     public void AbortHunt()
     {
         EndHunt("게임 초기화");
         hasSighting = false;
-        sightVelocity = Vector3.zero;
         sightSpotter = null;
         lastCandidates.Clear();
+        followTimers.Clear();
+        followCooldownUntil.Clear();
+        rejoinBlockedUntil.Clear();
+        layoutSummary = "";
     }
 
     // ────────────────────────────────────────────────
-    //  목격 보고 — 조정자가 플레이어에 대해 아는 유일한 경로
+    //  보고
     // ────────────────────────────────────────────────
 
-    /// <summary>몬스터가 플레이어를 시야로 보고 있는 동안 매 프레임 호출한다. 추격 허가와 무관하게 정보는 공유된다.</summary>
+    /// <summary>몬스터가 플레이어를 시야로 보고 있는 동안 매 프레임 호출한다. 발견자는 반드시 팀에 들어간다.</summary>
     public void ReportSighting(MonsterAI spotter, Vector3 seenPosition)
     {
         if (spotter == null) { return; }
-        float now = Time.time;
-
-        if (hasSighting && now - sightTime <= ContinuousSightWindow)
-        {
-            float dt = now - sightTime;
-            if (dt > 0.0001f)   // 같은 프레임에 여러 마리가 보고하면 dt가 0 — 방향 갱신 생략
-            {
-                Vector3 v = seenPosition - sightPosition;
-                v.y = 0f;
-                sightVelocity = Vector3.Lerp(sightVelocity, v / dt, 0.25f);
-            }
-        }
-        else
-        {
-            // 목격이 끊겼다가 새로 시작됨 — 이전 방향은 믿지 않는다
-            sightVelocity = Vector3.zero;
-        }
-
+        // 흩어지는 동안 팀 밖(또는 물러나는) 몬스터의 발견은 무시한다 — 팩맨의 스캐터와 같은 규칙(기획 2026-09-18)
+        if (IsScattering && !team.Contains(spotter)) { return; }
         hasSighting = true;
         sightPosition = seenPosition;
-        sightTime = now;
+        sightVelocity = playerVelocity;
+        sightTime = Time.time;
         sightSpotter = spotter;
         searchIssued = false;
 
-        bool byGlobal = spotter.role == MonsterAI.MonsterRole.Global_Stalker;
         if (!hunting)
         {
-            hunting = true;
-            largeHunt = byGlobal;
-            nextLayoutTime = 0f;
-            Log($"<color=orange><b>[사냥 시작]</b></color> {spotter.name} 발견 → {(largeHunt ? "큰" : "작은")} 포위");
+            StartHunt(spotter);
         }
-        else if (byGlobal && !largeHunt)
+        else if (!team.Contains(spotter))
         {
-            largeHunt = true;
-            nextLayoutTime = 0f;
-            Log("<color=orange><b>[포위 격상]</b></color> 전역 몬스터 발견 → 큰 포위");
+            AddToTeam(spotter, "직접 발견");
         }
     }
 
+    /// <summary>
+    /// 과녁 파괴 경보. 사냥 중이 아니면 가장 가까운 2마리를 발사 위치 근처(흐리게)로 확인 보낸다.
+    /// 경보만으로 사냥을 시작하지는 않는다 — 몬스터가 실제로 봐야 팀이 꾸려진다.
+    /// </summary>
+    public void ReportTargetAlarm(Vector3 shotPosition, float shotTime)
+    {
+        if (hunting) { return; }
+        foreach (MonsterAI m in NearestAvailable(2, null, shotPosition))
+        {
+            m.CommandSearch(BlurOnNav(shotPosition, HintBlurRadius * 1.5f));
+        }
+        Log("<color=orange><b>[과녁 경보]</b></color> 가까운 2마리가 발사 위치 근처로 확인하러 감");
+    }
+
+    /// <summary>추격자가 플레이어를 놓쳤을 때(모퉁이 등) 따라갈 흐린 목적지. 감독 → 몬스터 한 방향.</summary>
+    public bool TryGetPursuitHint(MonsterAI m, out Vector3 hint)
+    {
+        hint = Vector3.zero;
+        if (m == null || player == null) { return false; }
+        hint = BlurOnNav(playerPos, PursuitHintBlur);
+        return true;
+    }
+
     // ────────────────────────────────────────────────
-    //  추격 허가
+    //  추격 허가 (최대 2마리)
     // ────────────────────────────────────────────────
 
     /// <summary>
     /// 몬스터가 플레이어를 보고 추격에 들어가려 할 때 먼저 묻는다. 허가되면 true.
     ///   - 자리가 남아 있으면 허가
-    ///   - 전역 몬스터는 항상 허가 — 가득 차 있으면 가장 먼 구역 추격자를 즉시 차단으로 뺀다
+    ///   - 전역 몬스터는 가장 먼 구역 추격자를 차단으로 돌리고 허가
     ///   - 차단 대기 중 덮치려는 개체: 가장 먼 구역 추격자보다 swapDistanceMargin 이상 가까울 때만 교대
-    ///   - 그 밖(순찰·수색·복귀 중 발견): 거부하고 곧바로 아직 안 막힌 길로 차단 명령 — 추격을 거치지 않으니 한 순간도 3마리가 되지 않는다
+    ///   - 그 밖: 거부하고 차단 역할로 — 추격을 거치지 않으니 한 순간도 3마리가 되지 않는다
     /// </summary>
     public bool RequestChase(MonsterAI m)
     {
         if (m == null) { return false; }
+        // 흩어지는 동안에는 새로 추격에 들어가지 않는다(이미 쫓고 있던 개체만 계속)
+        if (IsScattering && m.CurrentState != MonsterAI.State.Chase) { return false; }
         RefreshChasers();
 
         int others = 0;
@@ -185,86 +241,519 @@ public class MonsterDirector : MonoBehaviour
         if (others < MaxChasers) { return true; }
 
         MonsterAI farthest = FarthestZoneChaser(m);
-
         if (m.role == MonsterAI.MonsterRole.Global_Stalker)
         {
-            if (farthest != null) { SendToCut(farthest, "전역 몬스터에게 자리 양보"); }
-            return true;
+            if (farthest != null && farthest.CanBeDemoted)
+            {
+                MakeCutter(farthest, "전역 몬스터에게 추격 자리 양보");
+                return true;
+            }
         }
-
-        if (m.CurrentState == MonsterAI.State.Intercept)
+        else if (m.CurrentState == MonsterAI.State.Intercept)
         {
             if (farthest != null && farthest.CanBeDemoted
-                && HorizontalDistance(m.transform.position, sightPosition) + SwapMargin
-                   < HorizontalDistance(farthest.transform.position, sightPosition))
+                && HorizontalDistance(m.transform.position, playerPos) + SwapMargin
+                   < HorizontalDistance(farthest.transform.position, playerPos))
             {
-                SendToCut(farthest, "더 가까운 차단 몬스터와 교대");
+                MakeCutter(farthest, "더 가까운 차단 몬스터와 교대");
                 return true;
             }
             return false;   // 자리를 지킨다
         }
 
-        // 순찰·수색·복귀 중에 발견했는데 자리가 없다 → 곧바로 빈 길로
-        SendToCut(m, "추격 인원 가득 — 발견 즉시 차단");
+        if (team.Contains(m) && m.CurrentState != MonsterAI.State.Intercept)
+        {
+            MakeCutter(m, "추격 인원 가득 — 막는 역할로");
+        }
         return false;
     }
 
+    // ────────────────────────────────────────────────
+    //  갱신
+    // ────────────────────────────────────────────────
+
     private void Update()
     {
+        if (!TrackPlayer()) { return; }
         if (GameFlowManager.Instance != null && !GameFlowManager.Instance.IsGameRunning) { return; }
 
         float now = Time.time;
         if (now >= nextCoordinateTime)
         {
             nextCoordinateTime = now + CoordinateInterval;
-            CoordinateChasers();
+            RefreshChasers();
+            UpdateHuntSpeeds();
+            UpdateTeleportReturns();
+            if (hunting)
+            {
+                CleanTeam();
+                EnforceChaserCap();
+                BreakFollowing();
+                TryHandoverChase();
+            }
         }
 
         if (!hunting) { return; }
 
-        float age = now - sightTime;
-        if (age > HuntMemory)
+        if (ShouldEndHunt())
         {
-            EndHunt("놓침");
+            EndHunt("팀 전원이 놓침");
             return;
         }
 
-        if (age <= LostSightGrace)
+        // 흩어짐: 조이기 20초 → 흩어짐 6초 (팩맨 스캐터). 추격자만 남고 나머지는 자기 구역으로 물러난다
+        UpdateScatter();
+        if (IsScattering)
         {
-            if (now >= nextLayoutTime)
+            layoutSummary = $"흩어짐 {ScatterRemaining:F1}초 남음 · 추격자만 계속 쫓는 중";
+            return;
+        }
+
+        // 기획 A안(2026-09-15): 아무도 못 보고 추격자도 모두 포기했으면 감독은 진짜 위치를 더 이상 알려주지 않는다.
+        // 막는 팀원은 마지막으로 받은 곳을 확인하고, 사냥 종료와 함께 돌아간다 — 끝까지 달리면 떨칠 수 있다.
+        // (QA S6: 막는 팀원이 진짜 위치를 계속 받아 따돌린 곳까지 찾아와 사냥이 끝나지 않았다)
+        if (!InfoLive())
+        {
+            layoutSummary = $"정보 끊김 — 팀 {team.Count}마리가 마지막 지점 확인 중 (사냥 종료까지 {Mathf.Max(0f, HuntMemory - (now - sightTime)):F1}초)";
+            return;
+        }
+        if (now >= nextTeamReviewTime)
+        {
+            nextTeamReviewTime = now + TeamReviewInterval;
+            ReviewTeam();
+        }
+        if (now >= nextLayoutTime)
+        {
+            nextLayoutTime = now + LayoutRefresh;
+            LayoutTeam();
+        }
+    }
+
+    /// <summary>감독은 진짜 위치·속도를 매 프레임 안다. 이 값은 흐린 목적지를 만드는 데만 쓴다.</summary>
+    private bool TrackPlayer()
+    {
+        if (player == null)
+        {
+            GameObject go = GameObject.FindGameObjectWithTag("Player");
+            if (go == null) { return false; }
+            player = go.transform;
+            hasPrevPlayerPos = false;
+        }
+        Vector3 pos = player.position;
+        if (hasPrevPlayerPos && Time.deltaTime > 0f)
+        {
+            Vector3 v = (pos - prevPlayerPos) / Time.deltaTime;
+            v.y = 0f;
+            playerVelocity = Vector3.Lerp(playerVelocity, v, 0.2f);
+        }
+        prevPlayerPos = pos;
+        hasPrevPlayerPos = true;
+        playerPos = pos;
+        return true;
+    }
+
+    /// <summary>
+    /// 사냥 속도(기획 A안): 추격·차단·달려가는 수색 중인 몬스터는 플레이어와의 거리에 따라
+    /// 가까우면 느리게(huntNearSpeed), 멀면 빠르게(huntFarSpeed). 똑바로 달리면 떨칠 수 있지만 먼 몬스터는 금방 따라붙는다.
+    /// </summary>
+    private void UpdateHuntSpeeds()
+    {
+        float nearD = NearDistance, farD = Mathf.Max(NearDistance + 0.1f, FarDistance);
+        // 정보가 끊긴 뒤에는 속도 계산도 진짜 위치가 아니라 마지막 목격 위치 기준
+        Vector3 reference = (hunting && !InfoLive()) ? sightPosition : playerPos;
+        foreach (MonsterAI m in MonsterAI.activeMonsters)
+        {
+            if (m == null) { continue; }
+            MonsterAI.State s = m.CurrentState;
+            bool huntMove = s == MonsterAI.State.Chase || s == MonsterAI.State.Intercept
+                || (s == MonsterAI.State.Investigate && m.IsRushing);
+            if (!huntMove) { m.SetHuntSpeed(-1f); continue; }
+            float t = Mathf.InverseLerp(nearD, farD, HorizontalDistance(m.transform.position, reference));
+            m.SetHuntSpeed(Mathf.Lerp(NearSpeed, FarSpeed, t));
+        }
+    }
+
+    // ────────────────────────────────────────────────
+    //  사냥 팀 (발견자 포함 3마리)
+    // ────────────────────────────────────────────────
+
+    private void StartHunt(MonsterAI spotter)
+    {
+        hunting = true;
+        huntPhaseStart = Time.time;
+        scatterUntil = 0f;
+        chaserOutOfZoneSince = 0f;
+        searchedSpots.Clear();
+        searchIssued = false;
+        team.Clear();
+        cutPoints.Clear();
+        cutWaypoints.Clear();
+        team.Add(spotter);
+        foreach (MonsterAI m in NearestAvailable(TeamSize - 1, team, playerPos)) { team.Add(m); }
+        nextLayoutTime = 0f;
+        nextTeamReviewTime = Time.time + TeamReviewInterval;
+        Log($"<color=orange><b>[사냥 시작]</b></color> {spotter.name} 발견 → 팀 {TeamNames()}");
+    }
+
+    private void AddToTeam(MonsterAI m, string reason)
+    {
+        if (team.Count >= TeamSize)
+        {
+            // 가득: 쫓고 있지 않은 팀원 중 플레이어에게서 가장 먼 개체가 자리를 비킨다
+            MonsterAI worst = null;
+            float worstLen = -1f;
+            foreach (MonsterAI t in team)
             {
-                nextLayoutTime = now + LayoutRefresh;
-                LayoutCutters();
+                if (t == null || t.CurrentState == MonsterAI.State.Chase) { continue; }
+                float len = RouteLengthToPlayer(t);
+                if (len > worstLen) { worstLen = len; worst = t; }
+            }
+            if (worst == null) { return; }
+            ReleaseMember(worst, $"{m.name}에게 자리 넘김");
+        }
+        team.Add(m);
+        nextLayoutTime = 0f;
+        Log($"<color=orange><b>[팀 합류]</b></color> {m.name} — {reason} → 팀 {TeamNames()}");
+    }
+
+    private void ReleaseMember(MonsterAI m, string reason)
+    {
+        team.Remove(m);
+        cutPoints.Remove(m);
+        cutWaypoints.Remove(m);
+        rejoinBlockedUntil[m] = Time.time + RejoinBlockTime;
+        if (m.CurrentState == MonsterAI.State.Intercept || m.CurrentState == MonsterAI.State.Investigate) { m.CommandRelease(); }
+        Log($"<color=grey><b>[팀 제외]</b></color> {m.name} — {reason}");
+    }
+
+    /// <summary>없어진 개체·포기한 개체를 팀에서 뺀다. 빈자리는 가장 가까운 순찰 몬스터로 채운다 — 팀은 늘 3마리.</summary>
+    private void CleanTeam()
+    {
+        for (int i = team.Count - 1; i >= 0; i--)
+        {
+            MonsterAI m = team[i];
+            if (m == null || !m.isActiveAndEnabled)
+            {
+                team.RemoveAt(i);
+                continue;
+            }
+            if (m.IsGivingUp)
+            {
+                team.RemoveAt(i);
+                cutPoints.Remove(m);
+                cutWaypoints.Remove(m);
+                rejoinBlockedUntil[m] = Time.time + RejoinBlockTime;
+                Log($"<color=grey><b>[팀 제외]</b></color> {m.name} — 끈질김이 다 떨어져 포기");
+                if (!searchIssued)
+                {
+                    searchIssued = true;
+                    SpreadSearch();
+                }
             }
         }
-        else if (!searchIssued)
+        if (team.Count > 0 && team.Count < TeamSize && InfoLive())
         {
-            // 놓쳤다: 한 번만 수색 지점을 흩어놓는다. 이후 다시 보이기 전까지 배치는 고정(모르는 걸 추측하지 않음)
-            searchIssued = true;
-            SpreadSearch();
+            foreach (MonsterAI m in NearestAvailable(TeamSize - team.Count, team, playerPos))
+            {
+                team.Add(m);
+                nextLayoutTime = 0f;
+                Log($"<color=orange><b>[팀 합류]</b></color> {m.name} — 빈자리 채움 → 팀 {TeamNames()}");
+            }
         }
+    }
+
+    /// <summary>
+    /// 플레이어가 도망친 쪽에 더 가까운 순찰 몬스터가 생기면, 가장 먼 차단 팀원과 교대한다.
+    /// 예: 남쪽으로 도망치면 남쪽 구역 몬스터가 팀에 들어와 앞길로 올라온다.
+    /// </summary>
+    private void ReviewTeam()
+    {
+        MonsterAI farCutter = null;
+        float farLen = -1f;
+        foreach (MonsterAI t in team)
+        {
+            if (t == null || t.CurrentState == MonsterAI.State.Chase || t.IsInStun) { continue; }
+            float len = RouteLengthToPlayer(t);
+            if (len > farLen) { farLen = len; farCutter = t; }
+        }
+        if (farCutter == null) { return; }
+
+        List<MonsterAI> outsiders = NearestAvailable(1, team, playerPos);
+        if (outsiders.Count == 0) { return; }
+        float outLen = RouteLengthToPlayer(outsiders[0]);
+        if (outLen < farLen * TeamSwapRatio)
+        {
+            ReleaseMember(farCutter, $"{outsiders[0].name}가 더 가까움 ({outLen:F0}m < {farLen:F0}m)");
+            team.Add(outsiders[0]);
+            nextLayoutTime = 0f;
+            Log($"<color=orange><b>[팀 교대]</b></color> {outsiders[0].name} 합류 → 팀 {TeamNames()}");
+        }
+    }
+
+    /// <summary>
+    /// 감독이 진짜 위치를 몬스터에게 흘려보내도 되는 상태인가:
+    /// 팀에 추격자(보고 있거나 끈질김으로 추적 중)가 있거나, 누군가 방금(0.5초 안) 봤을 때만.
+    /// </summary>
+    private bool InfoLive()
+    {
+        foreach (MonsterAI t in team)
+        {
+            if (t != null && t.CurrentState == MonsterAI.State.Chase) { return true; }
+        }
+        return hasSighting && Time.time - sightTime <= InfoGrace;
+    }
+
+    /// <summary>
+    /// 흩어짐(팩맨 스캐터): 조이기 구간이 scatterAfter를 넘으면 scatterTime 동안 흩어진다.
+    /// 추격자는 계속 쫓고, 막던 팀원은 자기 구역으로 빠르게 물러나며 scatterRejoinBlock 동안 다시 불려오지 않는다.
+    /// 추격이 길어질수록 다 같이 한 구역으로 몰리던 문제를 주기적으로 리셋한다.
+    /// </summary>
+    private void UpdateScatter()
+    {
+        float now = Time.time;
+        if (now < scatterUntil) { return; }
+        if (scatterUntil > 0f)
+        {
+            // 방금 끝났다 → 다시 조이기 시작
+            scatterUntil = 0f;
+            huntPhaseStart = now;
+            nextLayoutTime = 0f;
+            nextTeamReviewTime = now;
+            Log("<color=orange><b>[재소집]</b></color> 흩어짐 끝 — 가까운 몬스터로 다시 포위");
+            return;
+        }
+        if (now - huntPhaseStart < ScatterAfter) { return; }
+
+        scatterUntil = now + ScatterTime;
+        scatterCount++;
+        List<string> names = new List<string>();
+        foreach (MonsterAI m in new List<MonsterAI>(team))
+        {
+            if (m == null || m.CurrentState == MonsterAI.State.Chase) { continue; }   // 추격자는 계속 쫓는다
+            names.Add(m.name.Replace("Monster_", ""));
+            team.Remove(m);
+            cutPoints.Remove(m);
+            cutWaypoints.Remove(m);
+            rejoinBlockedUntil[m] = now + ScatterRejoinBlock;
+            m.CommandGoHome(ScatterRejoinBlock);
+        }
+        Log($"<color=cyan><b>[흩어짐]</b></color> {ScatterTime:F0}초 — 물러남: {string.Join(", ", names.ToArray())}");
+    }
+
+    /// <summary>
+    /// 추격 인계(기획 2026-09-18): 구역 몬스터가 자기 구역 밖까지 쫓아가면, 플레이어가 있는 구역의 몬스터가 추격을 이어받고
+    /// 원래 추격자는 자기 구역으로 돌아간다. 한 구역이 오래 비는 것을 막는다. 전역 몬스터는 인계하지 않는다.
+    /// </summary>
+    private void TryHandoverChase()
+    {
+        MonsterAI chaser = null;
+        foreach (MonsterAI t in team)
+        {
+            if (t != null && t.CurrentState == MonsterAI.State.Chase) { chaser = t; break; }
+        }
+        if (chaser == null || chaser.role == MonsterAI.MonsterRole.Global_Stalker || chaser.zoneCenter == null)
+        {
+            chaserOutOfZoneSince = 0f;
+            return;
+        }
+        float zoneLimit = Mathf.Min(chaser.zoneRadius, 60f);
+        bool outside = HorizontalDistance(playerPos, chaser.zoneCenter.position) > zoneLimit;
+        if (!outside) { chaserOutOfZoneSince = 0f; return; }
+        if (chaserOutOfZoneSince <= 0f) { chaserOutOfZoneSince = Time.time; return; }
+        if (Time.time - chaserOutOfZoneSince < HandoverDelay) { return; }
+
+        MonsterAI heir = ZoneOwner(playerPos, chaser);
+        if (heir == null || !heir.IsAvailableForOrders || heir.IsGivingUp) { return; }
+
+        chaserOutOfZoneSince = 0f;
+        if (!team.Contains(heir)) { AddToTeam(heir, "추격 인계"); }
+        heir.CommandSearch(BlurOnNav(playerPos, PursuitHintBlur));
+        team.Remove(chaser);
+        cutPoints.Remove(chaser);
+        cutWaypoints.Remove(chaser);
+        rejoinBlockedUntil[chaser] = Time.time + RejoinBlockTime;
+        chaser.CommandGoHome(RejoinBlockTime);
+        handovers++;
+        nextLayoutTime = 0f;
+        Log($"<color=orange><b>[추격 인계]</b></color> {chaser.name} → {heir.name} (플레이어가 구역을 벗어남)");
+    }
+
+    /// <summary>그 위치가 속한 구역의 몬스터(구역 중심이 가장 가까운 개체).</summary>
+    private static MonsterAI ZoneOwner(Vector3 pos, MonsterAI exclude)
+    {
+        MonsterAI best = null;
+        float bestD = float.MaxValue;
+        foreach (MonsterAI m in MonsterAI.activeMonsters)
+        {
+            if (m == null || m == exclude || m.role != MonsterAI.MonsterRole.Zone_Defender || m.zoneCenter == null) { continue; }
+            float dd = HorizontalDistance(pos, m.zoneCenter.position);
+            if (dd < bestD) { bestD = dd; best = m; }
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// 복귀 순간이동: 구역으로 돌아가는 중인 몬스터가 <b>플레이어에게 보이지 않고</b> 멀리 있으며
+    /// 일정 시간 그 상태가 이어지면 자기 구역으로 옮긴다. 도착 지점도 보이지 않는 곳이어야 한다.
+    /// 맵 한쪽이 오래 비는 것을 막는 장치(L4D의 활동 구역 재배치와 같은 발상).
+    /// </summary>
+    private void UpdateTeleportReturns()
+    {
+        if (player == null) { return; }
+        float now = Time.time;
+        foreach (MonsterAI m in MonsterAI.activeMonsters)
+        {
+            bool idle = m != null && (m.CurrentState == MonsterAI.State.Return || m.CurrentState == MonsterAI.State.Patrol);
+            Vector3 homeCenter = m != null && m.zoneCenter != null ? m.zoneCenter.position : Vector3.zero;
+            bool farFromHome = m != null && m.zoneCenter != null && HorizontalDistance(m.transform.position, homeCenter) > 25f;
+            if (m == null || m.IsInStun || team.Contains(m) || !idle || !farFromHome)
+            {
+                unseenSince.Remove(m);
+                continue;
+            }
+            if (HorizontalDistance(m.transform.position, playerPos) < TeleportMinDistance || PlayerCanSee(m.transform.position + Vector3.up * 1.2f))
+            {
+                unseenSince.Remove(m);
+                continue;
+            }
+            float since;
+            if (!unseenSince.TryGetValue(m, out since)) { unseenSince[m] = now; continue; }
+            if (now - since < TeleportUnseenTime) { continue; }
+
+            Vector3 home = m.zoneCenter != null ? m.zoneCenter.position : m.transform.position;
+            if (!NavMesh.SamplePosition(home, out NavMeshHit hit, 8f, NavMesh.AllAreas)) { continue; }
+            if (HorizontalDistance(hit.position, playerPos) < TeleportMinDistance || PlayerCanSee(hit.position + Vector3.up * 1.2f)) { continue; }
+
+            m.TeleportTo(hit.position);
+            unseenSince.Remove(m);
+            teleports++;
+            Log($"<color=grey><b>[복귀 순간이동]</b></color> {m.name} — 보이지 않는 곳에서 구역으로");
+        }
+    }
+
+    /// <summary>플레이어가 그 지점을 볼 수 있는가(시야각 + 가림). 순간이동을 들키지 않게 하는 검사.</summary>
+    private bool PlayerCanSee(Vector3 point)
+    {
+        if (player == null) { return false; }
+        Vector3 eye = playerPos + Vector3.up * 1.5f;
+        Vector3 to = point - eye;
+        if (Vector3.Angle(player.forward, to) > PlayerViewAngle * 0.5f) { return false; }
+        MonsterAI g = FindGlobal();
+        int mask = g != null ? g.obstacleMask.value : ~0;
+        return !Physics.Linecast(eye, point, mask, QueryTriggerInteraction.Ignore);
+    }
+
+    /// <summary>
+    /// 수색 분산(공유): 추격자가 포기하면 남은 팀원에게 서로 다른 수색 지점을 준다.
+    /// 이미 뒤진 곳은 목록으로 공유해 다시 가지 않는다(Game AI Pro의 수색 규칙).
+    /// </summary>
+    private void SpreadSearch()
+    {
+        List<MonsterAI> searchers = new List<MonsterAI>();
+        foreach (MonsterAI m in team)
+        {
+            if (m != null && m.IsAvailableForOrders && !m.IsGivingUp) { searchers.Add(m); }
+        }
+        if (searchers.Count == 0) { return; }
+
+        Vector3 p = sightPosition;
+        Vector3 dir = SightingDirection;
+        List<Vector3> raw = new List<Vector3>();
+        if (dir.sqrMagnitude > 0.01f)
+        {
+            raw.Add(p + dir * SearchNear);
+            raw.Add(p + Quaternion.Euler(0f, 50f, 0f) * dir * SearchNear);
+            raw.Add(p + Quaternion.Euler(0f, -50f, 0f) * dir * SearchNear);
+            raw.Add(p + dir * SearchFar);
+        }
+        for (int i = 0; i < 6; i++) { raw.Add(p + Quaternion.Euler(0f, 60f * i, 0f) * Vector3.forward * SearchNear); }
+
+        int given = 0;
+        foreach (MonsterAI m in searchers)
+        {
+            Vector3 best = Vector3.zero;
+            float bestCost = float.MaxValue;
+            foreach (Vector3 r in raw)
+            {
+                if (!NavMesh.SamplePosition(r, out NavMeshHit hit, 5f, NavMesh.AllAreas)) { continue; }
+                bool old = false;
+                foreach (Vector3 done in searchedSpots) { if (HorizontalDistance(done, hit.position) < 10f) { old = true; break; } }
+                if (old) { continue; }
+                if (!BuildRoute(m.transform.position, hit.position, out _, out float len)) { continue; }
+                if (len < bestCost) { bestCost = len; best = hit.position; }
+            }
+            if (bestCost == float.MaxValue) { continue; }
+            m.CommandSearch(BlurOnNav(best, HintBlurRadius));
+            cutPoints.Remove(m);
+            cutWaypoints.Remove(m);
+            searchedSpots.Add(best);
+            given++;
+        }
+        if (given > 0) { Log($"<color=yellow><b>[수색 분산]</b></color> {given}마리에게 서로 다른 지점 (이미 뒤진 {searchedSpots.Count}곳 제외)"); }
+    }
+
+    private bool ShouldEndHunt()
+    {
+        if (team.Count == 0) { return true; }
+        foreach (MonsterAI t in team)
+        {
+            if (t != null && t.CurrentState == MonsterAI.State.Chase) { return false; }
+        }
+        return Time.time - sightTime > HuntMemory;
+    }
+
+    private void EndHunt(string reason)
+    {
+        if (hunting) { Log($"<color=grey><b>[사냥 종료]</b></color> {reason}"); }
+        foreach (MonsterAI m in team)
+        {
+            if (m == null) { continue; }
+            if (m.CurrentState == MonsterAI.State.Intercept || m.CurrentState == MonsterAI.State.Investigate) { m.CommandRelease(); }
+        }
+        foreach (MonsterAI m in MonsterAI.activeMonsters)
+        {
+            if (m != null && m.CurrentState != MonsterAI.State.Chase) { m.ResetPursuit(); }
+        }
+        team.Clear();
+        cutPoints.Clear();
+        cutWaypoints.Clear();
+        followTimers.Clear();
+        searchedSpots.Clear();
+        scatterUntil = 0f;
+        hunting = false;
+    }
+
+    /// <summary>지금 명령을 받을 수 있는 몬스터 중 target까지 실제 경로가 짧은 순서로 count마리.</summary>
+    private List<MonsterAI> NearestAvailable(int count, List<MonsterAI> exclude, Vector3 target)
+    {
+        List<KeyValuePair<float, MonsterAI>> list = new List<KeyValuePair<float, MonsterAI>>();
+        if (count <= 0) { return new List<MonsterAI>(); }
+        foreach (MonsterAI m in MonsterAI.activeMonsters)
+        {
+            if (m == null || !m.IsAvailableForOrders || m.IsGivingUp) { continue; }
+            if (exclude != null && exclude.Contains(m)) { continue; }
+            if (rejoinBlockedUntil.TryGetValue(m, out float until) && Time.time < until) { continue; }
+            if (!BuildRoute(m.transform.position, target, out _, out float len)) { continue; }
+            list.Add(new KeyValuePair<float, MonsterAI>(len, m));
+        }
+        list.Sort((a, b) => a.Key.CompareTo(b.Key));
+        List<MonsterAI> result = new List<MonsterAI>();
+        for (int i = 0; i < list.Count && i < count; i++) { result.Add(list[i].Value); }
+        return result;
     }
 
     // ────────────────────────────────────────────────
     //  추격 인원 안전장치
     // ────────────────────────────────────────────────
 
-    /// <summary>
-    /// 허가제를 거치지 않고 추격에 들어간 경우(기절에서 풀린 직후 등)를 위한 안전장치.
-    /// 최대치를 넘으면 가장 먼 구역 추격자를 차단으로 뺀다. 우선순위: 전역 → 목격 위치에 가까운 순.
-    /// </summary>
-    private void CoordinateChasers()
+    private void EnforceChaserCap()
     {
-        RefreshChasers();
-        demoted.RemoveWhere(m => m == null || m.CurrentState == MonsterAI.State.Chase);
-
-        if (!hasSighting) { return; }
         int guard = 0;
         while (chasers.Count > MaxChasers && guard++ < 5)
         {
             MonsterAI farthest = FarthestZoneChaser(null);
             if (farthest == null || !farthest.CanBeDemoted) { break; }
-            SendToCut(farthest, $"추격 {chasers.Count}마리 초과");
+            MakeCutter(farthest, $"추격 {chasers.Count}마리 초과");
             RefreshChasers();
         }
     }
@@ -285,89 +774,355 @@ public class MonsterDirector : MonoBehaviour
         foreach (MonsterAI c in chasers)
         {
             if (c == null || c == exclude || c.role != MonsterAI.MonsterRole.Zone_Defender) { continue; }
-            float d = HorizontalDistance(c.transform.position, sightPosition);
+            float d = HorizontalDistance(c.transform.position, playerPos);
             if (d > bestDist) { bestDist = d; best = c; }
         }
         return best;
     }
 
-    /// <summary>한 마리를 아직 안 막힌 길 중 가장 좋은 곳으로 차단 보낸다. 쓸 만한 길이 없으면 제자리에서 대기.</summary>
-    private void SendToCut(MonsterAI m, string reason)
+    /// <summary>추격자를 막는 역할로 돌린다. 우선 자기 쪽 길로 다가가게 하고, 곧바로 차단 배치를 다시 계산한다.</summary>
+    private void MakeCutter(MonsterAI m, string reason)
     {
-        List<Vector3> pts = SelectCutPoints(1, m);
-        Vector3 point = pts.Count > 0 ? pts[0] : m.transform.position;
+        if (!team.Contains(m)) { AddToTeam(m, reason); }
+        Vector3 point = StopShortPoint(m);
         m.CommandAmbush(point);
-        SetOrder(m, point, OrderKind.Cut);
-        demoted.Add(m);
+        cutPoints[m] = point;
+        cutWaypoints.Remove(m);
         RefreshChasers();
+        nextLayoutTime = 0f;
         Log($"<color=magenta><b>[차단 전환]</b></color> {m.name} — {reason}");
     }
 
     // ────────────────────────────────────────────────
-    //  보이는 동안: 빈 길 차단
+    //  줄줄이 감지
     // ────────────────────────────────────────────────
 
-    private void LayoutCutters()
+    /// <summary>
+    /// 같은 방향으로 움직이는 몬스터 바로 뒤(followDistance 안, 같은 줄)에 followHoldTime 이상 붙어 가면 뒤쪽을 떼어낸다.
+    ///   - 추격자끼리 줄: 뒤쪽 구역 추격자를 막는 역할로(전역은 비키지 않는다)
+    ///   - 차단 이동 중: 차단 배치를 즉시 다시 계산한다(다른 팀원 길과 겹치는 길은 비싸다)
+    /// </summary>
+    private void BreakFollowing()
     {
-        RefreshChasers();
-        int wanted = (largeHunt ? LargeCutters : SmallCutters) + demoted.Count;
-        List<Vector3> points = SelectCutPoints(wanted, null);
+        List<MonsterAI> all = MonsterAI.activeMonsters;
+        float maxDist = FollowDistance;
+        for (int i = 0; i < all.Count; i++)
+        {
+            MonsterAI trail = all[i];
+            if (trail == null) { continue; }
+            MonsterAI lead = FindLeader(trail, all, maxDist);
+            if (lead == null) { followTimers.Remove(trail); continue; }
 
-        List<MonsterAI> candidates = new List<MonsterAI>();
-        foreach (MonsterAI m in MonsterAI.activeMonsters)
-        {
-            if (m != null && m.IsAvailableForOrders) { candidates.Add(m); }
-        }
+            float t = (followTimers.TryGetValue(trail, out float v) ? v : 0f) + CoordinateInterval;
+            followTimers[trail] = t;
+            if (t < FollowHoldTime) { continue; }
+            if (followCooldownUntil.TryGetValue(trail, out float until) && Time.time < until) { continue; }
 
-        HashSet<MonsterAI> assigned = new HashSet<MonsterAI>();
-        foreach (KeyValuePair<MonsterAI, Vector3> pair in AssignGreedy(candidates, points, avoidCrossing: true))
-        {
-            pair.Key.CommandAmbush(pair.Value);
-            SetOrder(pair.Key, pair.Value, OrderKind.Cut);
-            assigned.Add(pair.Key);
-        }
-
-        // 이번 배치에서 빠진 차단 개체는 풀어준다 (직접 쫓는 중이면 그대로)
-        List<MonsterAI> stale = new List<MonsterAI>();
-        foreach (KeyValuePair<MonsterAI, OrderKind> kv in orderKinds)
-        {
-            if (kv.Value == OrderKind.Cut && !assigned.Contains(kv.Key)) { stale.Add(kv.Key); }
-        }
-        foreach (MonsterAI m in stale)
-        {
-            if (m != null && m.CurrentState != MonsterAI.State.Chase) { m.CommandRelease(); }
-            ClearOrder(m);
-            demoted.Remove(m);
+            if (BreakFollower(trail, lead))
+            {
+                followTimers.Remove(trail);
+                followCooldownUntil[trail] = Time.time + FollowCooldown;
+                followBreaks++;
+            }
         }
     }
 
-    /// <summary>
-    /// 차단 지점 고르기 — "아직 막히지 않은 길".
-    ///
-    /// 1) 마지막 목격 위치 P에서 8방향으로 바닥을 따라 최대 거리까지 뻗어 본다. 막히는 곳이 후보.
-    /// 2) 최소 거리도 못 가고 막히는 방향은 버린다(벽·막다른 곳). 서로 가까운 후보는 하나로 합친다.
-    ///    → 복도 한가운데서는 복도 양 끝 두 방향만 남는다.
-    /// 3) 점수: 이미 누가 오고 있는 방향(추격자 위치, 다른 차단 몬스터의 지점)과 각도가 멀수록 +,
-    ///    마지막 이동 방향 쪽이면 보조 +, 추격자와 너무 가까우면 −.
-    /// 4) 가장 좋은 곳부터 하나씩 고르고, 고른 방향은 "막힘"으로 쳐서 다음 선택에 반영한다.
-    /// 전부 목격 기록으로만 계산한다 — 진짜 현재 위치는 쓰지 않는다.
-    /// </summary>
-    private List<Vector3> SelectCutPoints(int count, MonsterAI exclude)
+    private static MonsterAI FindLeader(MonsterAI trail, List<MonsterAI> all, float maxDist)
     {
-        List<Vector3> result = new List<Vector3>();
-        lastCandidates.Clear();
-        if (count <= 0 || !hasSighting) { return result; }
+        if (trail.IsInStun) { return null; }
+        Vector3 tv = trail.PlanarVelocity;
+        if (tv.magnitude < FollowMinSpeed) { return null; }
+        Vector3 heading = tv.normalized;
 
-        Vector3 p = sightPosition;
+        foreach (MonsterAI lead in all)
+        {
+            if (lead == null || lead == trail || lead.IsInStun) { continue; }
+            Vector3 lv = lead.PlanarVelocity;
+            if (lv.magnitude < FollowMinSpeed || Vector3.Dot(lv.normalized, heading) < 0.8f) { continue; }
+            Vector3 gap = lead.transform.position - trail.transform.position;
+            gap.y = 0f;
+            float ahead = Vector3.Dot(gap, heading);
+            if (ahead <= 0.5f || ahead > maxDist) { continue; }
+            if ((gap - heading * ahead).magnitude <= FollowLateral) { return lead; }
+        }
+        return null;
+    }
+
+    private bool BreakFollower(MonsterAI trail, MonsterAI lead)
+    {
+        if (!team.Contains(trail)) { return false; }
+        string who = $"{trail.name}가 {lead.name} 뒤를 따라감";
+        if (trail.CurrentState == MonsterAI.State.Chase)
+        {
+            if (lead.CurrentState != MonsterAI.State.Chase || !trail.CanBeDemoted) { return false; }
+            MakeCutter(trail, $"줄줄이 — {who}");
+            return true;
+        }
+        if (trail.CurrentState == MonsterAI.State.Intercept)
+        {
+            nextLayoutTime = 0f;
+            Log($"<color=magenta><b>[줄줄이]</b></color> {who} → 차단 배치 다시 계산");
+            return true;
+        }
+        return false;
+    }
+
+    // ────────────────────────────────────────────────
+    //  차단 배치 — "내가 향하는 쪽을, 각자 다른 길로"
+    // ────────────────────────────────────────────────
+
+    /// <summary>
+    /// 추격 중이 아닌 팀원(차단 역할)에게 막을 곳과 가는 길을 준다 — 기획 2026-09-17 "추격 1 · 우회 2".
+    ///
+    /// 1) 후보: 플레이어에게서 8방향으로 뻗어 막히는 곳.
+    /// 2) 각 팀원 × 후보마다 <b>가는 길</b>을 짠다(<see cref="PlanApproach"/>).
+    ///    최단 경로가 플레이어를 뚫고 가면, 경유 지점을 들러 <b>빙 돌아가는</b> 길을 찾는다.
+    ///    돌아가는 데 detourTimeLimit(기본 8초)을 넘으면 그 조합은 쓰지 않는다.
+    /// 3) 들어오는 쪽을 갈라놓는다: 추격자가 오는 쪽과 sideAngleMin(기본 90°) 이상,
+    ///    차단 몬스터끼리도 그만큼 다른 쪽. 만족하는 조합이 없으면 한 단계씩 조건을 푼다.
+    /// 4) 비용 = 도착 시간 − (플레이어가 향하는 쪽 + 추격자와 다른 쪽 점수) − 가던 지점 유지.
+    /// 5) 갈 곳이 없는 팀원은 자기 쪽 길로 플레이어 앞까지 접근.
+    /// </summary>
+    private void LayoutTeam()
+    {
+        RefreshChasers();
+        List<MonsterAI> cutters = new List<MonsterAI>();
+        foreach (MonsterAI m in team)
+        {
+            if (m != null && m.IsAvailableForOrders && !m.IsGivingUp) { cutters.Add(m); }
+        }
+        foreach (MonsterAI m in new List<MonsterAI>(cutPoints.Keys))
+        {
+            if (!cutters.Contains(m)) { cutPoints.Remove(m); cutWaypoints.Remove(m); }
+        }
+        if (cutters.Count == 0)
+        {
+            layoutSummary = $"팀 {team.Count}마리 모두 추격 중";
+            return;
+        }
+
+        candidateOrigin = NavMesh.SamplePosition(playerPos, out NavMeshHit ph, 3f, NavMesh.AllAreas) ? ph.position : playerPos;
+        BuildCandidates(candidateOrigin);
+        Vector3 heading = PlayerHeading();
+        Vector3 chaserSide = ChaserSide();
+
+        int n = cutters.Count;
+        int s = lastCandidates.Count;
+        bool[] reachable = new bool[n * s];
+        bool[] viaWay = new bool[n * s];
+        Vector3[] ways = new Vector3[n * s];
+        float[] eta = new float[n * s];
+        int valid = 0, unreachable = 0;
+        for (int ci = 0; ci < s; ci++)
+        {
+            if (lastCandidates[ci].rejected) { continue; }
+            valid++;
+            for (int mi = 0; mi < n; mi++)
+            {
+                int idx = mi * s + ci;
+                reachable[idx] = PlanApproach(cutters[mi], lastCandidates[ci].point, out ways[idx], out viaWay[idx], out eta[idx]);
+                if (!reachable[idx]) { unreachable++; }
+            }
+        }
+
+        List<Vector3> takenSides = new List<Vector3>();
+        bool[] mTaken = new bool[n];
+        int assigned = 0, detours = 0, relaxed = 0;
+        for (int pick = 0; pick < n; pick++)
+        {
+            int bm = -1, bc = -1, bestStrict = 3;
+            float bestCost = float.MaxValue;
+            // 3: 추격자와 90°+ & 서로 90°+ / 2: 추격자 90°+ & 서로 60°+ / 1: 추격자 60°+ / 0: 제한 없음
+            // 좁은 곳에서는 후보 방향이 서너 개뿐이라 한 번에 풀지 않고 단계적으로 완화한다(2026-09-17 진단)
+            for (int strict = 3; strict >= 0 && bm < 0; strict--)
+            {
+                float chaserMin = strict >= 2 ? SideAngleMin : (strict == 1 ? SideAngleMin * 0.66f : 0f);
+                float peerMin = strict >= 3 ? SideAngleMin : (strict == 2 ? SideAngleMin * 0.66f : 0f);
+                for (int ci = 0; ci < s; ci++)
+                {
+                    CutCandidate c = lastCandidates[ci];
+                    if (c.rejected || c.chosen) { continue; }
+                    if (chaserMin > 0f && chaserSide.sqrMagnitude > 0.01f && Vector3.Angle(c.direction, chaserSide) < chaserMin) { continue; }
+                    if (peerMin > 0f)
+                    {
+                        bool clash = false;
+                        foreach (Vector3 t in takenSides) { if (Vector3.Angle(c.direction, t) < peerMin) { clash = true; break; } }
+                        if (clash) { continue; }
+                    }
+                    for (int mi = 0; mi < n; mi++)
+                    {
+                        int idx = mi * s + ci;
+                        if (mTaken[mi] || !reachable[idx]) { continue; }
+                        float score = 0f;
+                        if (heading.sqrMagnitude > 0.01f) { score += Vector3.Dot(c.direction, heading) * 2f; }
+                        if (chaserSide.sqrMagnitude > 0.01f) { score += Vector3.Angle(c.direction, chaserSide) / 180f * 3f; }
+                        bool keeping = cutPoints.TryGetValue(cutters[mi], out Vector3 cur) && HorizontalDistance(cur, c.point) < HintBlurRadius + 4f;
+                        float cost = eta[idx] - score - (keeping ? 1.5f : 0f);
+                        if (cost < bestCost) { bestCost = cost; bm = mi; bc = ci; bestStrict = strict; }
+                    }
+                }
+            }
+            if (bm < 0) { break; }
+
+            CutCandidate chosen = lastCandidates[bc];
+            chosen.chosen = true;
+            lastCandidates[bc] = chosen;
+            takenSides.Add(chosen.direction);
+            mTaken[bm] = true;
+            assigned++;
+            if (bestStrict < 3) { relaxed++; }
+            int best = bm * s + bc;
+            if (viaWay[best]) { detours++; }
+            IssueCut(cutters[bm], chosen.point, ways[best], viaWay[best]);
+        }
+
+        int approach = 0;
+        for (int mi = 0; mi < n; mi++)
+        {
+            if (mTaken[mi]) { continue; }
+            IssueCut(cutters[mi], StopShortPoint(cutters[mi]), Vector3.zero, false);
+            approach++;
+        }
+
+        layoutSummary = $"팀 {team.Count} (추격 {chasers.Count}) · 후보 {valid}길 · 막기 {assigned}(빙 돌아 {detours}) / 자기 쪽 접근 {approach}"
+            + (relaxed > 0 ? $" · 방향 겹침 허용 {relaxed}" : "") + (unreachable > 0 ? $" · 못 가는 조합 {unreachable}" : "");
+    }
+
+    /// <summary>
+    /// 이 몬스터가 그 지점까지 가는 길. 최단 경로가 플레이어 근처를 뚫고 가면 경유 지점을 들러 돌아간다.
+    /// 돌아가도 detourTimeLimit 안에 못 가면 false — 억지로 맵을 한 바퀴 돌리지 않는다.
+    /// </summary>
+    private bool PlanApproach(MonsterAI m, Vector3 point, out Vector3 waypoint, out bool viaWaypoint, out float travelTime)
+    {
+        waypoint = Vector3.zero;
+        viaWaypoint = false;
+        travelTime = 0f;
+        float speed = Mathf.Max(1f, FarSpeed);
+
+        if (BuildRoute(m.transform.position, point, out Vector3[] direct, out float directLen)
+            && !PassesNear(direct, candidateOrigin, CrossingRadius))
+        {
+            travelTime = directLen / speed;
+            return travelTime <= DetourTimeLimit;
+        }
+
+        // 플레이어를 뚫고 가야 한다 → 옆·반대편으로 도는 경유 지점을 찾는다
+        float best = float.MaxValue;
+        for (int k = 0; k < 8; k++)
+        {
+            Vector3 w = ClampAlongNav(candidateOrigin, candidateOrigin + Quaternion.Euler(0f, 45f * k, 0f) * Vector3.forward * WaypointDistance);
+            if (HorizontalDistance(w, candidateOrigin) < WaypointDistance * 0.6f) { continue; }
+            if (!BuildRoute(m.transform.position, w, out Vector3[] leg1, out float l1)) { continue; }
+            if (PassesNear(leg1, candidateOrigin, CrossingRadius)) { continue; }
+            if (!BuildRoute(w, point, out Vector3[] leg2, out float l2)) { continue; }
+            if (PassesNear(leg2, candidateOrigin, CrossingRadius)) { continue; }
+            float t = (l1 + l2) / speed;
+            if (t < best) { best = t; waypoint = w; }
+        }
+        if (best <= DetourTimeLimit)
+        {
+            viaWaypoint = true;
+            travelTime = best;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>추격자가 플레이어에게 들어오는 쪽(플레이어 → 추격자 방향). 여러 마리면 평균.</summary>
+    private Vector3 ChaserSide()
+    {
+        Vector3 sum = Vector3.zero;
+        foreach (MonsterAI ch in chasers)
+        {
+            if (ch == null) { continue; }
+            Vector3 v = ch.transform.position - candidateOrigin;
+            v.y = 0f;
+            if (v.magnitude < 4f)
+            {
+                Vector3 back = -ch.PlanarVelocity;
+                if (back.sqrMagnitude > 0.25f) { v = back; }
+            }
+            if (v.sqrMagnitude > 0.25f) { sum += v.normalized; }
+        }
+        return sum.sqrMagnitude > 0.01f ? sum.normalized : Vector3.zero;
+    }
+
+    private void IssueCut(MonsterAI m, Vector3 point, Vector3 waypoint, bool viaWaypoint)
+    {
+        Vector3 blurred = StableBlur(m, point);
+        if (viaWaypoint)
+        {
+            m.CommandAmbush(blurred, waypoint, true);
+            cutWaypoints[m] = waypoint;
+        }
+        else
+        {
+            m.CommandAmbush(blurred);
+            cutWaypoints.Remove(m);
+        }
+        cutPoints[m] = blurred;
+    }
+
+    /// <summary>개체마다 흐림 방향을 몇 초간 고정한다 — 매번 바꾸면 목적지가 튀어 몬스터가 흔들린다.</summary>
+    private Vector3 StableBlur(MonsterAI m, Vector3 point)
+    {
+        if (!blurRefreshAt.TryGetValue(m, out float at) || Time.time >= at || !blurOffsets.ContainsKey(m))
+        {
+            Vector2 r = Random.insideUnitCircle * HintBlurRadius;
+            blurOffsets[m] = new Vector3(r.x, 0f, r.y);
+            blurRefreshAt[m] = Time.time + BlurRefreshTime;
+        }
+        Vector3 p = point + blurOffsets[m];
+        return NavMesh.SamplePosition(p, out NavMeshHit hit, HintBlurRadius + 2f, NavMesh.AllAreas) ? hit.position : point;
+    }
+
+    /// <summary>자기 쪽에서 플레이어에게 가는 실제 경로 위, 플레이어 앞 20m(가까우면 절반 거리) 지점. 뒤를 따라가지 않고 자기 방향에서 조인다.</summary>
+    private Vector3 StopShortPoint(MonsterAI m)
+    {
+        Vector3 from = m.transform.position;
+        if (!BuildRoute(from, playerPos, out Vector3[] corners, out float length) || corners.Length < 2) { return from; }
+        float stopAt = Mathf.Min(StopShortDistance, HorizontalDistance(from, playerPos) * 0.5f);
+        for (int i = 1; i < corners.Length; i++)
+        {
+            float segLen = Vector3.Distance(corners[i - 1], corners[i]);
+            int steps = Mathf.Max(1, Mathf.CeilToInt(segLen));
+            for (int k = 1; k <= steps; k++)
+            {
+                Vector3 q = Vector3.Lerp(corners[i - 1], corners[i], (float)k / steps);
+                if (HorizontalDistance(q, playerPos) <= stopAt) { return q; }
+            }
+        }
+        return corners[corners.Length - 1];
+    }
+
+    /// <summary>플레이어가 향하는 방향. 멈춰 있으면 추격자 반대편, 그것도 없으면 방향 없음.</summary>
+    private Vector3 PlayerHeading()
+    {
+        if (playerVelocity.magnitude > MovingSpeedThreshold) { return playerVelocity.normalized; }
+        Vector3 away = Vector3.zero;
+        foreach (MonsterAI c in chasers)
+        {
+            if (c == null) { continue; }
+            Vector3 v = playerPos - c.transform.position;
+            v.y = 0f;
+            if (v.sqrMagnitude > 0.01f) { away += v.normalized; }
+        }
+        return away.sqrMagnitude > 0.01f ? away.normalized : Vector3.zero;
+    }
+
+    /// <summary>origin에서 16방향으로 바닥을 따라 뻗어 본 후보 길. 너무 짧은 방향은 버리고, 가까운 후보는 합친다.</summary>
+    private void BuildCandidates(Vector3 origin)
+    {
+        lastCandidates.Clear();
         float maxDist = CandidateMaxDistance;
         float minDist = CandidateMinDistance;
         float merge = CandidateMergeDistance;
 
-        for (int i = 0; i < 8; i++)
+        for (int i = 0; i < 16; i++)
         {
-            Vector3 dir = Quaternion.Euler(0f, 45f * i, 0f) * Vector3.forward;
-            Vector3 point = ClampAlongNav(p, p + dir * maxDist);
-            Vector3 flat = point - p;
+            Vector3 dir = Quaternion.Euler(0f, 22.5f * i, 0f) * Vector3.forward;
+            Vector3 point = ClampAlongNav(origin, origin + dir * maxDist);
+            Vector3 flat = point - origin;
             flat.y = 0f;
             float reach = flat.magnitude;
 
@@ -381,7 +1136,6 @@ public class MonsterDirector : MonoBehaviour
 
             if (!c.rejected)
             {
-                // 가까운 후보가 이미 있으면 더 멀리 뻗은 쪽만 남긴다
                 int dup = -1;
                 for (int k = 0; k < lastCandidates.Count; k++)
                 {
@@ -395,162 +1149,38 @@ public class MonsterDirector : MonoBehaviour
             }
             lastCandidates.Add(c);
         }
-
-        // 이미 막힌 방향: 추격자가 오는 방향 + 다른 차단 몬스터가 맡은 지점 방향
-        List<Vector3> covered = new List<Vector3>();
-        foreach (MonsterAI ch in chasers)
-        {
-            if (ch == null || ch == exclude) { continue; }
-            Vector3 v = ch.transform.position - p;
-            v.y = 0f;
-            if (v.sqrMagnitude > 0.25f) { covered.Add(v.normalized); }
-        }
-        foreach (KeyValuePair<MonsterAI, OrderKind> kv in orderKinds)
-        {
-            if (kv.Value != OrderKind.Cut || kv.Key == exclude || !orderPoints.TryGetValue(kv.Key, out Vector3 op)) { continue; }
-            if (exclude == null) { continue; }   // 전체 재배치 때는 기존 차단 지점을 막힘으로 치지 않는다(다시 고르는 중)
-            Vector3 v = op - p;
-            v.y = 0f;
-            if (v.sqrMagnitude > 0.25f) { covered.Add(v.normalized); }
-        }
-
-        Vector3 moveDir = SightingDirection;
-        float avoid = AvoidChaserRadius;
-
-        for (int pick = 0; pick < count; pick++)
-        {
-            int best = -1;
-            float bestScore = float.MinValue;
-            for (int k = 0; k < lastCandidates.Count; k++)
-            {
-                CutCandidate c = lastCandidates[k];
-                if (c.rejected || c.chosen) { continue; }
-
-                float minAngle = 180f;
-                foreach (Vector3 cov in covered) { minAngle = Mathf.Min(minAngle, Vector3.Angle(c.direction, cov)); }
-                float score = minAngle / 180f;
-                if (moveDir.sqrMagnitude > 0.01f) { score += (Vector3.Dot(c.direction, moveDir) + 1f) * 0.5f * 0.35f; }
-                foreach (MonsterAI ch in chasers)
-                {
-                    if (ch != null && ch != exclude && HorizontalDistance(ch.transform.position, c.point) < avoid) { score -= 1f; }
-                }
-                c.score = score;
-                lastCandidates[k] = c;
-                if (score > bestScore) { bestScore = score; best = k; }
-            }
-            if (best < 0) { break; }
-
-            CutCandidate chosen = lastCandidates[best];
-            chosen.chosen = true;
-            lastCandidates[best] = chosen;
-            covered.Add(chosen.direction);
-            result.Add(chosen.point);
-        }
-        return result;
     }
 
-    // ────────────────────────────────────────────────
-    //  놓친 뒤: 수색 분산
-    // ────────────────────────────────────────────────
-
-    /// <summary>
-    /// 사냥 참여자(추격하다 놓친 개체 + 차단·수색 명령을 받은 개체)에게 서로 다른 수색 지점을 준다.
-    /// 1번은 마지막 목격 위치, 나머지는 이동 방향 쪽으로 치우친 부채꼴. 방향을 모르면 둘레에 고르게.
-    /// 플레이어가 반대로 도망쳤다면 AI는 모른다 — 의도된 "따돌림".
-    /// </summary>
-    private void SpreadSearch()
+    private static float AngleScore(Vector3 direction, List<Vector3> covered, Vector3 heading)
     {
-        List<MonsterAI> participants = new List<MonsterAI>();
-        foreach (MonsterAI m in MonsterAI.activeMonsters)
-        {
-            if (m == null || m.IsInStun) { continue; }
-            if (m.CurrentState == MonsterAI.State.Chase || orderKinds.ContainsKey(m)) { participants.Add(m); }
-        }
-        if (participants.Count == 0) { return; }
-
-        Vector3 p = sightPosition;
-        Vector3 d = KnownDirection();
-        float near = SearchNear;
-        float far = SearchFar;
-
-        List<Vector3> raw = new List<Vector3> { p };
-        if (d.sqrMagnitude > 0.01f)
-        {
-            raw.Add(p + d * near);
-            raw.Add(p + Quaternion.Euler(0f, 40f, 0f) * d * near * 1.25f);
-            raw.Add(p + Quaternion.Euler(0f, -40f, 0f) * d * near * 1.25f);
-            raw.Add(p + d * far);
-            raw.Add(p + Quaternion.Euler(0f, 90f, 0f) * d * near);
-            raw.Add(p + Quaternion.Euler(0f, -90f, 0f) * d * near);
-        }
-        else
-        {
-            for (int i = 0; i < 6; i++) { raw.Add(p + Quaternion.Euler(0f, 60f * i, 0f) * Vector3.forward * near); }
-        }
-
-        List<Vector3> points = new List<Vector3>();
-        foreach (Vector3 r in raw)
-        {
-            if (points.Count >= participants.Count) { break; }
-            if (!NavMesh.SamplePosition(r, out NavMeshHit hit, 4f, NavMesh.AllAreas)) { continue; }
-            bool tooClose = false;
-            foreach (Vector3 q in points) { if ((q - hit.position).sqrMagnitude < 9f) { tooClose = true; break; } }
-            if (!tooClose) { points.Add(hit.position); }
-        }
-
-        HashSet<MonsterAI> assigned = new HashSet<MonsterAI>();
-        foreach (KeyValuePair<MonsterAI, Vector3> pair in AssignGreedy(participants, points, avoidCrossing: false))
-        {
-            pair.Key.CommandSearch(pair.Value);
-            SetOrder(pair.Key, pair.Value, OrderKind.Search);
-            assigned.Add(pair.Key);
-        }
-        foreach (MonsterAI m in participants)
-        {
-            if (!assigned.Contains(m)) { ClearOrder(m); }
-        }
-        demoted.Clear();
-
-        Log($"<color=yellow><b>[놓침 → 수색 분산]</b></color> {points.Count}곳");
-    }
-
-    private void EndHunt(string reason)
-    {
-        if (hunting) { Log($"<color=grey><b>[사냥 종료]</b></color> {reason}"); }
-
-        foreach (MonsterAI m in new List<MonsterAI>(orderKinds.Keys))
-        {
-            if (m != null) { m.CommandRelease(); }
-        }
-        orderPoints.Clear();
-        orderKinds.Clear();
-        demoted.Clear();
-        hunting = false;
-        largeHunt = false;
-        searchIssued = false;
+        float minAngle = 180f;
+        foreach (Vector3 cov in covered) { minAngle = Mathf.Min(minAngle, Vector3.Angle(direction, cov)); }
+        float score = minAngle / 180f;
+        if (heading.sqrMagnitude > 0.01f) { score += (Vector3.Dot(direction, heading) + 1f) * 0.25f; }
+        return score;
     }
 
     // ────────────────────────────────────────────────
     //  보조
     // ────────────────────────────────────────────────
 
-    /// <summary>
-    /// 마지막으로 알던 이동 방향. 목격 당시 움직이고 있었으면 그 방향,
-    /// 멈춰 있었으면 쫓는 개체들의 반대편(도망칠 쪽으로 추정), 그것도 없으면 방향 없음.
-    /// </summary>
-    private Vector3 KnownDirection()
+    private float RouteLengthToPlayer(MonsterAI m)
     {
-        if (sightVelocity.magnitude > MovingSpeedThreshold) { return sightVelocity.normalized; }
+        return BuildRoute(m.transform.position, playerPos, out _, out float len) ? len : 9999f;
+    }
 
-        Vector3 away = Vector3.zero;
-        foreach (MonsterAI c in chasers)
-        {
-            if (c == null) { continue; }
-            Vector3 v = sightPosition - c.transform.position;
-            v.y = 0f;
-            if (v.sqrMagnitude > 0.01f) { away += v.normalized; }
-        }
-        return (away.sqrMagnitude > 0.01f) ? away.normalized : Vector3.zero;
+    private Vector3 BlurOnNav(Vector3 point, float radius)
+    {
+        Vector2 r = Random.insideUnitCircle * radius;
+        Vector3 p = point + new Vector3(r.x, 0f, r.y);
+        return NavMesh.SamplePosition(p, out NavMeshHit hit, radius + 2f, NavMesh.AllAreas) ? hit.position : point;
+    }
+
+    private string TeamNames()
+    {
+        List<string> names = new List<string>();
+        foreach (MonsterAI m in team) { if (m != null) { names.Add(m.name.Replace("Monster_", "")); } }
+        return string.Join(", ", names);
     }
 
     /// <summary>origin에서 desired 쪽으로 걸을 수 있는 바닥을 따라가다 막히면 막힌 곳 바로 앞.</summary>
@@ -567,78 +1197,66 @@ public class MonsterDirector : MonoBehaviour
         return NavMesh.SamplePosition(target, out NavMeshHit f, 4f, NavMesh.AllAreas) ? f.position : o.position;
     }
 
-    /// <summary>
-    /// 몬스터 × 지점 짝을 비용이 싼 순서로 확정한다.
-    /// 비용 = <b>실제 경로 길이</b> + (차단일 때) 경로가 목격 위치 근처를 지나면 가산점
-    ///        − 이미 같은 명령을 받고 있던 개체 보너스(자리 교체로 우왕좌왕 방지).
-    /// 직선거리로 재면 벽 너머 가까운 지점을 골라 실제로는 플레이어 뒤를 따라 도는 같은 길이 된다.
-    /// </summary>
-    private List<KeyValuePair<MonsterAI, Vector3>> AssignGreedy(List<MonsterAI> monsters, List<Vector3> points, bool avoidCrossing)
+    /// <summary>실제로 걸어갈 수 있는 완전한 경로. 없으면 false.</summary>
+    private bool BuildRoute(Vector3 from, Vector3 to, out Vector3[] corners, out float length)
     {
-        List<KeyValuePair<MonsterAI, Vector3>> result = new List<KeyValuePair<MonsterAI, Vector3>>();
-        int n = monsters.Count;
-        int s = points.Count;
-        if (n == 0 || s == 0) { return result; }
-
-        float[,] cost = new float[n, s];
-        for (int mi = 0; mi < n; mi++)
-        {
-            bool continuing = orderKinds.TryGetValue(monsters[mi], out OrderKind k) && k == (avoidCrossing ? OrderKind.Cut : OrderKind.Search);
-            for (int pi = 0; pi < s; pi++)
-            {
-                cost[mi, pi] = PathCost(monsters[mi].transform.position, points[pi], avoidCrossing) - (continuing ? 5f : 0f);
-            }
-        }
-
-        bool[] mTaken = new bool[n];
-        bool[] pTaken = new bool[s];
-        for (int step = 0; step < Mathf.Min(n, s); step++)
-        {
-            float best = float.MaxValue;
-            int bm = -1, bp = -1;
-            for (int mi = 0; mi < n; mi++)
-            {
-                if (mTaken[mi]) { continue; }
-                for (int pi = 0; pi < s; pi++)
-                {
-                    if (pTaken[pi]) { continue; }
-                    if (cost[mi, pi] < best) { best = cost[mi, pi]; bm = mi; bp = pi; }
-                }
-            }
-            if (bm < 0) { break; }
-            mTaken[bm] = true;
-            pTaken[bp] = true;
-            result.Add(new KeyValuePair<MonsterAI, Vector3>(monsters[bm], points[bp]));
-        }
-        return result;
-    }
-
-    /// <summary>실제 경로 길이 + 경로의 각 구간이 목격 위치 가까이 지나가면 가산점. 경로를 못 구하면 직선거리 + 큰 벌점.</summary>
-    private float PathCost(Vector3 from, Vector3 to, bool avoidCrossing)
-    {
+        corners = null;
+        length = 0f;
         if (pathBuffer == null) { pathBuffer = new NavMeshPath(); }
         Vector3 start = NavMesh.SamplePosition(from, out NavMeshHit sh, 3f, NavMesh.AllAreas) ? sh.position : from;
-        if (!NavMesh.CalculatePath(start, to, NavMesh.AllAreas, pathBuffer) || pathBuffer.status != NavMeshPathStatus.PathComplete)
+        Vector3 end = NavMesh.SamplePosition(to, out NavMeshHit eh, 3f, NavMesh.AllAreas) ? eh.position : to;
+        if (!NavMesh.CalculatePath(start, end, NavMesh.AllAreas, pathBuffer) || pathBuffer.status != NavMeshPathStatus.PathComplete)
         {
-            return Vector3.Distance(from, to) + 100f;
+            return false;
         }
+        corners = pathBuffer.corners;
+        for (int i = 1; i < corners.Length; i++) { length += Vector3.Distance(corners[i - 1], corners[i]); }
+        return corners.Length > 0;
+    }
 
-        Vector3[] corners = pathBuffer.corners;
-        float length = 0f;
-        float nearest = float.MaxValue;
+    /// <summary>경로가 p 반경 안을 지나가는가. 이미 반경 안에서 출발하는 개체(떠나는 길)는 검사하지 않는다.</summary>
+    private static bool PassesNear(Vector3[] corners, Vector3 p, float radius)
+    {
+        if (radius <= 0f || corners == null || corners.Length < 2) { return false; }
+        if (HorizontalDistance(corners[0], p) < radius) { return false; }
         for (int i = 1; i < corners.Length; i++)
         {
-            length += Vector3.Distance(corners[i - 1], corners[i]);
-            if (avoidCrossing) { nearest = Mathf.Min(nearest, DistancePointToSegment(sightPosition, corners[i - 1], corners[i])); }
+            if (DistancePointToSegment(p, corners[i - 1], corners[i]) < radius) { return true; }
         }
-        if (avoidCrossing && corners.Length < 2) { nearest = HorizontalDistance(start, sightPosition); }
+        return false;
+    }
 
-        float avoid = CrossingRadius;
-        if (avoidCrossing && avoid > 0f && nearest < avoid)
+    private static float MaxOverlap(Vector3[] route, List<Vector3[]> others)
+    {
+        float max = 0f;
+        foreach (Vector3[] o in others) { max = Mathf.Max(max, Overlap(route, o)); }
+        return max;
+    }
+
+    /// <summary>route를 2m 간격으로 짚어 보며, 다른 길 3m 안에 드는 비율(0~1).</summary>
+    private static float Overlap(Vector3[] route, Vector3[] other)
+    {
+        if (route == null || other == null || route.Length < 2 || other.Length < 2) { return 0f; }
+        int total = 0, near = 0;
+        for (int i = 1; i < route.Length; i++)
         {
-            length += CrossingPenaltyValue * (1f - nearest / avoid);
+            float len = HorizontalDistance(route[i - 1], route[i]);
+            int steps = Mathf.Max(1, Mathf.CeilToInt(len / OverlapSampleStep));
+            for (int k = 0; k < steps; k++)
+            {
+                Vector3 q = Vector3.Lerp(route[i - 1], route[i], (float)k / steps);
+                total++;
+                if (DistanceToPolyline(q, other) < OverlapNearDistance) { near++; }
+            }
         }
-        return length;
+        return total > 0 ? (float)near / total : 0f;
+    }
+
+    private static float DistanceToPolyline(Vector3 p, Vector3[] line)
+    {
+        float best = float.MaxValue;
+        for (int i = 1; i < line.Length; i++) { best = Mathf.Min(best, DistancePointToSegment(p, line[i - 1], line[i])); }
+        return best;
     }
 
     private static float DistancePointToSegment(Vector3 p, Vector3 a, Vector3 b)
@@ -655,18 +1273,6 @@ public class MonsterDirector : MonoBehaviour
     {
         a.y = b.y = 0f;
         return Vector3.Distance(a, b);
-    }
-
-    private void SetOrder(MonsterAI m, Vector3 point, OrderKind kind)
-    {
-        orderPoints[m] = point;
-        orderKinds[m] = kind;
-    }
-
-    private void ClearOrder(MonsterAI m)
-    {
-        orderPoints.Remove(m);
-        orderKinds.Remove(m);
     }
 
     private static MonsterAI FindGlobal()
@@ -686,33 +1292,51 @@ public class MonsterDirector : MonoBehaviour
 
     // 수치: 전역 몬스터 인스펙터 "6. 조정자" 칸 (없으면 기본값)
     private int MaxChasers { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(1, g.maxSimultaneousChasers) : 2; } }
-    private int SmallCutters { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0, g.smallHuntCutters) : 1; } }
-    private int LargeCutters { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0, g.largeHuntCutters) : 2; } }
+    private int TeamSize { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(1, g.huntTeamSize) : 3; } }
+    private float TeamSwapRatio { get { MonsterAI g = FindGlobal(); return g != null ? g.teamSwapRatio : 0.6f; } }
     private float CandidateMaxDistance { get { MonsterAI g = FindGlobal(); return g != null ? g.cutCandidateMaxDistance : 18f; } }
     private float CandidateMinDistance { get { MonsterAI g = FindGlobal(); return g != null ? g.cutCandidateMinDistance : 6f; } }
     private float CandidateMergeDistance { get { MonsterAI g = FindGlobal(); return g != null ? g.cutCandidateMergeDistance : 8f; } }
-    private float AvoidChaserRadius { get { MonsterAI g = FindGlobal(); return g != null ? g.cutAvoidChaserRadius : 10f; } }
-    private float SwapMargin { get { MonsterAI g = FindGlobal(); return g != null ? g.swapDistanceMargin : 3f; } }
     private float CrossingRadius { get { MonsterAI g = FindGlobal(); return g != null ? g.crossingAvoidRadius : 6f; } }
-    private float CrossingPenaltyValue { get { MonsterAI g = FindGlobal(); return g != null ? g.crossingPenalty : 25f; } }
-    private float SearchNear { get { MonsterAI g = FindGlobal(); return g != null ? g.searchSpreadNear : 8f; } }
-    private float SearchFar { get { MonsterAI g = FindGlobal(); return g != null ? g.searchSpreadFar : 18f; } }
+    private float HintBlurRadius { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0f, g.hintBlurRadius) : 4f; } }
+    private float PursuitHintBlur { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0f, g.pursuitHintBlur) : 3f; } }
+    private float SwapMargin { get { MonsterAI g = FindGlobal(); return g != null ? g.swapDistanceMargin : 3f; } }
     private float HuntMemory { get { MonsterAI g = FindGlobal(); return g != null ? g.huntMemory : 8f; } }
     private float LayoutRefresh { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0.2f, g.layoutRefreshInterval) : 1f; } }
-    private float LostSightGrace { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0.05f, g.lostSightGrace) : 0.5f; } }
+    private float FollowDistance { get { MonsterAI g = FindGlobal(); return g != null ? g.followDistance : 7f; } }
+    private float FollowHoldTime { get { MonsterAI g = FindGlobal(); return g != null ? g.followHoldTime : 1f; } }
+    private float NearSpeed { get { MonsterAI g = FindGlobal(); return g != null ? g.huntNearSpeed : 10f; } }
+    private float FarSpeed { get { MonsterAI g = FindGlobal(); return g != null ? g.huntFarSpeed : 14f; } }
+    private float NearDistance { get { MonsterAI g = FindGlobal(); return g != null ? g.huntNearDistance : 15f; } }
+    private float FarDistance { get { MonsterAI g = FindGlobal(); return g != null ? g.huntFarDistance : 40f; } }
+    private float DetourTimeLimit { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(1f, g.detourTimeLimit) : 8f; } }
+    private float WaypointDistance { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(5f, g.detourWaypointDistance) : 22f; } }
+    private float SideAngleMin { get { MonsterAI g = FindGlobal(); return g != null ? g.sideAngleMin : 90f; } }
+    private float ScatterAfter { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(3f, g.scatterAfter) : 20f; } }
+    private float ScatterTime { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(1f, g.scatterTime) : 6f; } }
+    private float ScatterRejoinBlock { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0f, g.scatterRejoinBlock) : 8f; } }
+    private float HandoverDelay { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0.5f, g.handoverDelay) : 3f; } }
+    private float TeleportUnseenTime { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0.5f, g.teleportUnseenTime) : 3f; } }
+    private float TeleportMinDistance { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(10f, g.teleportMinDistance) : 40f; } }
+    private float PlayerViewAngle { get { MonsterAI g = FindGlobal(); return g != null ? g.playerViewAngle : 90f; } }
+
+    /// <summary>못 본 채 추적할 때의 속도 상한(기획 A안). 가까울 때 속도와 같다.</summary>
+    public float TrackingSpeedCap => NearSpeed;
+
+    // 몬스터가 읽는 끈질김 수치
+    public float PursuitPersistence { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0.5f, g.pursuitPersistence) : 6f; } }
+    public float PersistenceDecay { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Clamp01(g.persistenceDecay) : 0.7f; } }
+    public float PersistenceMin { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0.2f, g.persistenceMin) : 2f; } }
+    public float GiveUpLookTime { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0f, g.giveUpLookTime) : 2f; } }
 
     private void OnDrawGizmos()
     {
-        if (hasSighting)
+        if (hunting)
         {
             Gizmos.color = Color.red;
-            Gizmos.DrawWireSphere(sightPosition, 1.5f);
-            Gizmos.DrawLine(sightPosition, sightPosition + SightingDirection * 6f);
+            Gizmos.DrawWireSphere(candidateOrigin, 1.5f);
         }
-        foreach (KeyValuePair<MonsterAI, Vector3> pair in orderPoints)
-        {
-            Gizmos.color = orderKinds.TryGetValue(pair.Key, out OrderKind k) && k == OrderKind.Cut ? Color.magenta : Color.yellow;
-            Gizmos.DrawWireSphere(pair.Value, 1f);
-        }
+        Gizmos.color = Color.magenta;
+        foreach (KeyValuePair<MonsterAI, Vector3> pair in cutPoints) { Gizmos.DrawWireSphere(pair.Value, 1f); }
     }
 }

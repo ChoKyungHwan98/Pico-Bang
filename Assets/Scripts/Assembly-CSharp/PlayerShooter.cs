@@ -121,6 +121,10 @@ public class PlayerShooter : MonoBehaviour
 
 	private IEnumerator ShootLightning()
 	{
+		// 발사체가 날아가는 동안 플레이어가 이동해도 과녁 경보에는 발사 순간 위치가 남아야 한다.
+		Vector3 shotPosition = base.transform.position;
+		float shotTime = Time.time;
+
 		if (animator != null)
 		{
 			animator.SetTrigger("Shoot");
@@ -167,17 +171,18 @@ public class PlayerShooter : MonoBehaviour
 			bool capturedDidHit = didHit;
 
 			Projectile.Fire(origin, impactPoint, projectileSpeed, projectileSize, projectileColor, projectileTrailTime,
-				onArrive: () => ApplyHit(hitMonster, hitTarget, capturedDidHit, capturedHit, impactPoint));
+				onArrive: () => ApplyHit(hitMonster, hitTarget, capturedDidHit, capturedHit, impactPoint, shotPosition, shotTime));
 			yield break;
 		}
 
 		// ── 예전 방식: 즉시 레이저 ──────────────────────────
 		yield return StartCoroutine(DrawBeam(origin, impactPoint));
-		ApplyHit(hitMonster, hitTarget, didHit, hitInfo, impactPoint);
+		ApplyHit(hitMonster, hitTarget, didHit, hitInfo, impactPoint, shotPosition, shotTime);
 	}
 
 	/// <summary>발사체가 닿는 순간 실제 피격 처리와 연출을 한다.</summary>
-	private void ApplyHit(MonsterAI monster, Target target, bool didHit, RaycastHit hit, Vector3 impactPoint)
+	private void ApplyHit(MonsterAI monster, Target target, bool didHit, RaycastHit hit, Vector3 impactPoint,
+		Vector3 shotPosition, float shotTime)
 	{
 		// 날아가는 동안 파괴됐을 수 있다
 		if (monster != null)
@@ -186,7 +191,7 @@ public class PlayerShooter : MonoBehaviour
 		}
 		if (target != null)
 		{
-			target.OnHit();
+			target.OnHit(shotPosition, shotTime);
 		}
 
 		BurstVfx.Play(impactPoint, impactBurstColor, count: 18, speed: 5f, size: 0.14f, lifetime: 0.4f);

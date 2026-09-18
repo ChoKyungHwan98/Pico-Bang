@@ -47760,9 +47760,9 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1936}
   m_LocalEulerAnglesHint: {x: 0, y: -0, z: -0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 126, y: -40}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 80, y: 80}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1918
@@ -47820,9 +47820,9 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1932}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 150, y: -25}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 300, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1921
@@ -48087,9 +48087,9 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1936}
   m_LocalEulerAnglesHint: {x: 0, y: -0, z: -0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 40, y: -40}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 80, y: 80}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1934
@@ -48149,9 +48149,9 @@ RectTransform:
   - {fileID: 1958}
   m_Father: {fileID: 1949}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 215, y: -50}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0, y: 1}
 --- !u!224 &1937
@@ -48245,9 +48245,9 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1932}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 200, y: -75}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 400, y: 50}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1942
@@ -48284,9 +48284,9 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1936}
   m_LocalEulerAnglesHint: {x: 0, y: -0, z: -0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 212, y: -40}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 80, y: 80}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1944
@@ -48327,10 +48327,10 @@ RectTransform:
   - {fileID: 1950}
   m_Father: {fileID: 1927}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 244.80002, y: -241}
-  m_SizeDelta: {x: 489.60004, y: 78}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1946
 RectTransform:
@@ -48367,10 +48367,10 @@ RectTransform:
   - {fileID: 1959}
   m_Father: {fileID: 1927}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 0, y: -92}
-  m_SizeDelta: {x: 489.60004, y: 92}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0, y: 0}
 --- !u!224 &1948
 RectTransform:
@@ -48410,7 +48410,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 0, y: -0}
-  m_SizeDelta: {x: 315, y: 200}
+  m_SizeDelta: {x: 315, y: 0}
   m_Pivot: {x: 0, y: 1}
 --- !u!224 &1950
 RectTransform:
@@ -48486,9 +48486,9 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1949}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 100, y: -100}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 200, y: 200}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1954
@@ -48568,9 +48568,9 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1936}
   m_LocalEulerAnglesHint: {x: 0, y: -0, z: -0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 384, y: -40}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 80, y: 80}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1959
@@ -48669,7 +48669,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 69, y: -47}
-  m_SizeDelta: {x: 315, y: 310}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0, y: 1}
 --- !u!224 &1964
 RectTransform:
@@ -48686,10 +48686,10 @@ RectTransform:
   - {fileID: 1923}
   m_Father: {fileID: 1927}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 244.80002, y: -147}
-  m_SizeDelta: {x: 489.60004, y: 78}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1965
 RectTransform:
@@ -48743,9 +48743,9 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1936}
   m_LocalEulerAnglesHint: {x: 0, y: -0, z: -0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 298, y: -40}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 80, y: 80}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!225 &1968
@@ -60596,13 +60596,14 @@ MonoBehaviour:
   role: 1
   style: 0
   player: {fileID: 0}
-  useGlobalNavMesh: 0
+  useGlobalNavMesh: 1
   zoneCenter: {fileID: 1408}
   zoneRadius: 200
   patrolSpeed: 8
   chaseSpeed: 11
   investigateSpeed: 9
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -60610,14 +60611,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 140
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -60629,22 +60630,39 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
@@ -61215,6 +61233,7 @@ MonoBehaviour:
   chaseSpeed: 10
   investigateSpeed: 7.5
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -61222,14 +61241,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -61241,22 +61260,39 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
@@ -61302,6 +61338,7 @@ MonoBehaviour:
   chaseSpeed: 10
   investigateSpeed: 7.5
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -61309,14 +61346,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -61328,22 +61365,39 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
@@ -62235,6 +62289,7 @@ MonoBehaviour:
   chaseSpeed: 10
   investigateSpeed: 7.5
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -62242,14 +62297,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -62261,22 +62316,39 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
@@ -62322,6 +62394,7 @@ MonoBehaviour:
   chaseSpeed: 10
   investigateSpeed: 7.5
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -62329,14 +62402,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
-  zoneHearingScale: 0.45
+  zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -62348,22 +62421,39 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
@@ -62485,7 +62575,7 @@ MonoBehaviour:
   impactBurstColor: {r: 0.6, g: 0.92, b: 1, a: 1}
   zapSound: {fileID: 8300000, guid: 7dd526e104c47ea47930895d64257b32, type: 3}
   hitSound: {fileID: 8300000, guid: 9fae1bb5246f9f5438e164676ec675b3, type: 3}
-  shotNoiseRadius: 30
+  shotNoiseRadius: 50
   firePoint: {fileID: 1396}
   fireAction: {fileID: 11400000, guid: 58dce9769b7f0ac40a406a5391f84c17, type: 2}
 --- !u!114 &2460
@@ -63032,10 +63122,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1568010799}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 613, y: -31}
-  m_SizeDelta: {x: 110, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &295260173
 MonoBehaviour:
@@ -63191,10 +63281,10 @@ RectTransform:
   - {fileID: 963377691}
   m_Father: {fileID: 1568010799}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 389, y: -31}
-  m_SizeDelta: {x: 306, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &376673638
 MonoBehaviour:
@@ -63301,10 +63391,10 @@ RectTransform:
   - {fileID: 1246044377}
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -550}
-  m_SizeDelta: {x: 668, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &402978243
 MonoBehaviour:
@@ -63573,10 +63663,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -152}
-  m_SizeDelta: {x: 668, y: 6}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &459777105
 MonoBehaviour:
@@ -63646,7 +63736,7 @@ RectTransform:
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 760, y: 743}
+  m_SizeDelta: {x: 760, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &580291272
 MonoBehaviour:
@@ -63760,10 +63850,10 @@ RectTransform:
   - {fileID: 1312542253}
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -668}
-  m_SizeDelta: {x: 668, y: 74}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &588323195
 MonoBehaviour:
@@ -64067,10 +64157,10 @@ RectTransform:
   - {fileID: 1450873387}
   m_Father: {fileID: 949278973}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 389, y: -31}
-  m_SizeDelta: {x: 306, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &632113130
 MonoBehaviour:
@@ -64176,10 +64266,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 402978242}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 110, y: -31}
-  m_SizeDelta: {x: 220, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &648978218
 MonoBehaviour:
@@ -64797,10 +64887,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -606}
-  m_SizeDelta: {x: 668, y: 14}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &869001627
 MonoBehaviour:
@@ -64988,10 +65078,10 @@ RectTransform:
   - {fileID: 1005213618}
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -444}
-  m_SizeDelta: {x: 668, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &949278974
 MonoBehaviour:
@@ -65108,10 +65198,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -74}
-  m_SizeDelta: {x: 668, y: 72}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &972644891
 MonoBehaviour:
@@ -65340,10 +65430,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 949278973}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 613, y: -31}
-  m_SizeDelta: {x: 110, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1005213619
 MonoBehaviour:
@@ -65497,10 +65587,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1874471068}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 613, y: -31}
-  m_SizeDelta: {x: 110, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1006888638
 MonoBehaviour:
@@ -65656,10 +65746,10 @@ RectTransform:
   - {fileID: 1560872788}
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -204}
-  m_SizeDelta: {x: 668, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1097552877
 MonoBehaviour:
@@ -65741,10 +65831,10 @@ RectTransform:
   - {fileID: 1808698134}
   m_Father: {fileID: 588323194}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 162, y: -37}
-  m_SizeDelta: {x: 324, y: 74}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1163987789
 MonoBehaviour:
@@ -65897,10 +65987,10 @@ RectTransform:
   - {fileID: 1639200583}
   m_Father: {fileID: 402978242}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 259, y: -31}
-  m_SizeDelta: {x: 46, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1246044378
 MonoBehaviour:
@@ -66019,10 +66109,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1568010799}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 110, y: -31}
-  m_SizeDelta: {x: 220, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1310340599
 MonoBehaviour:
@@ -66177,10 +66267,10 @@ RectTransform:
   - {fileID: 1987185795}
   m_Father: {fileID: 588323194}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 506, y: -37}
-  m_SizeDelta: {x: 324, y: 74}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1312542254
 MonoBehaviour:
@@ -66372,10 +66462,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1874471068}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 110, y: -31}
-  m_SizeDelta: {x: 220, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1361371821
 MonoBehaviour:
@@ -66525,17 +66615,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ad3c2cfe36c7204428bb562e2b3c460f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::AITestDebug
-  autoStartGame: 1
-  godMode: 1
-  freezeTimer: 1
+  testMoveSpeed: 11
+  testFastSpeed: 30
+  testNoiseRadius: 50
+  testFireInterval: 1.5
   lineWidth: 0.6
-  noiseRadius: 45
-  pipRect:
-    serializedVersion: 2
-    x: 0.7
-    y: 0.02
-    width: 0.28
-    height: 0.28
 --- !u!4 &1386168710
 Transform:
   m_ObjectHideFlags: 0
@@ -66693,10 +66777,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -497}
-  m_SizeDelta: {x: 668, y: 8}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1481305986
 MonoBehaviour:
@@ -66877,10 +66961,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1097552876}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 613, y: -31}
-  m_SizeDelta: {x: 110, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1560872789
 MonoBehaviour:
@@ -67036,10 +67120,10 @@ RectTransform:
   - {fileID: 295260172}
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -284}
-  m_SizeDelta: {x: 668, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1568010800
 MonoBehaviour:
@@ -67304,10 +67388,10 @@ RectTransform:
   - {fileID: 1223771057}
   m_Father: {fileID: 1097552876}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 389, y: -31}
-  m_SizeDelta: {x: 306, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1630601778
 MonoBehaviour:
@@ -67489,10 +67573,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 1097552876}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 110, y: -31}
-  m_SizeDelta: {x: 220, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1647654202
 MonoBehaviour:
@@ -67648,10 +67732,10 @@ RectTransform:
   - {fileID: 435886276}
   m_Father: {fileID: 1874471068}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 389, y: -31}
-  m_SizeDelta: {x: 306, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1705474441
 MonoBehaviour:
@@ -67757,10 +67841,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 949278973}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 110, y: -31}
-  m_SizeDelta: {x: 220, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1721863624
 MonoBehaviour:
@@ -68127,10 +68211,10 @@ RectTransform:
   - {fileID: 1006888637}
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -364}
-  m_SizeDelta: {x: 668, y: 62}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1874471069
 MonoBehaviour:
@@ -68377,10 +68461,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 580291271}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 380, y: -129.5}
-  m_SizeDelta: {x: 668, y: 3}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1915622803
 MonoBehaviour:

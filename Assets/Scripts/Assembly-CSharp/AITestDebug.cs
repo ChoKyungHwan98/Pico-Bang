@@ -15,7 +15,7 @@ using UnityEngine.Rendering.Universal;
 ///   - 조정자의 <b>마지막 목격 기록</b>(✕ 위치 + 이동 방향 화살표 + 몇 초 전) — 몬스터가 컨닝하지 않는지 확인용
 ///   - 차단 지점(보라 원), 수색 지점(노랑 원)
 ///
-/// 조작: WASD 지도 기준 이동(W = 지도 위쪽) · Shift 빠르게 · 좌클릭 = 플레이어 자리에서 소리
+/// 조작: WASD 지도 기준 이동(W = 지도 위쪽) · Shift 빠르게 · 좌클릭 = 플레이어 자리에서 소리 · Space 누른 채 이동 = 큰 턱 넘기
 /// 테스트에 필요한 것만 남긴다: 홈 화면·카운트다운·소리·게임 UI·과녁·연출·사격은 모두 뺀다.
 /// 무적·제한 시간 정지는 자동. 오버레이 선은 전용 레이어(31)에 그린다.
 /// </summary>
@@ -29,8 +29,10 @@ public class AITestDebug : MonoBehaviour
 	[SerializeField] private float testMoveSpeed = 11f;
 	[Tooltip("Shift 누를 때 속도. 맵을 빨리 가로지르는 용도")]
 	[SerializeField] private float testFastSpeed = 30f;
-	[Tooltip("좌클릭 소리 반경 (게임 속 발사음과 같게)")]
-	[SerializeField] private float testNoiseRadius = 30f;
+	[Tooltip("좌클릭 소리 반경 (게임 속 발사음과 같게 50m)")]
+	[SerializeField] private float testNoiseRadius = 50f;
+	[Tooltip("좌클릭 간격(초). 실제 게임 사격 간격(PlayerShooter.fireCooldown = 1.5)과 같게 — 테스트 조건을 실제와 맞춘다")]
+	[SerializeField] private float testFireInterval = 1.5f;
 
 	[Header("표시")]
 	[SerializeField] private float lineWidth = 0.6f;
@@ -49,6 +51,8 @@ public class AITestDebug : MonoBehaviour
 	private PlayerController playerController;
 	private PlayerShooter playerShooter;
 	private Vector3 moveInput;
+	private bool bigHop;
+	private float nextFireTime;
 	private Vector3 playerPrevPos;
 	private Vector3 playerVel;
 
@@ -58,6 +62,8 @@ public class AITestDebug : MonoBehaviour
 	}
 	private readonly Dictionary<MonsterAI, MonsterLines> monsterLines = new Dictionary<MonsterAI, MonsterLines>();
 	private readonly List<LineRenderer> orderMarkers = new List<LineRenderer>();
+	private readonly List<LineRenderer> waypointMarkers = new List<LineRenderer>();
+	private static readonly Color WaypointColor = new Color(0.35f, 0.85f, 1f, 0.9f);
 	private LineRenderer playerMarker, playerVelocity, noiseRing;
 	private LineRenderer sightCrossA, sightCrossB, sightArrow;
 	private readonly List<LineRenderer> candidateLines = new List<LineRenderer>();
@@ -204,11 +210,13 @@ public class AITestDebug : MonoBehaviour
 			if (kb.aKey.isPressed) { moveInput.x -= 1f; }
 			if (moveInput.sqrMagnitude > 1f) { moveInput.Normalize(); }
 			moveInput *= kb.leftShiftKey.isPressed ? testFastSpeed : testMoveSpeed;
+			bigHop = kb.spaceKey.isPressed;
 		}
 
 		Mouse mouse = Mouse.current;
-		if (running && mouse != null && mouse.leftButton.wasPressedThisFrame && player != null)
+		if (running && mouse != null && mouse.leftButton.wasPressedThisFrame && player != null && Time.time >= nextFireTime)
 		{
+			nextFireTime = Time.time + testFireInterval;
 			NoiseSystem.Emit(player.position, testNoiseRadius, NoiseKind.Shot);
 			SetCircle(noiseRing, player.position, testNoiseRadius);
 			noiseRing.enabled = true;
@@ -217,8 +225,10 @@ public class AITestDebug : MonoBehaviour
 	}
 
 	/// <summary>
-	/// 테스트용 이동: 물리 대신 걸을 수 있는 바닥(NavMesh)을 따라 미끄러지듯 움직인다.
-	/// 계단·턱·높은 곳을 점프 없이 타고 넘는다. 맵과 NavMesh는 그대로라 몬스터는 실제 게임과 같은 지형에서 움직인다.
+	/// 테스트용 이동: 물리 대신 걸을 수 있는 바닥(NavMesh) 위로만 움직인다. 맵과 NavMesh는 그대로라 몬스터는 실제 게임과 같은 지형에서 움직인다.
+	/// 바닥은 가려는 지점 위에서 아래로 광선을 쏴서 찾는다 — 턱 아래로 뛰어내리기(높이 제한 15m)와 낮은 턱 오르기가 된다.
+	/// (예전엔 "가장 가까운 NavMesh"를 찾아서, 턱 끝에서는 아래 바닥보다 윗 바닥 가장자리가 가까워 되돌려졌다 — 2026-09-15 피드백)
+	/// 벽은 넘지 않는다. Space를 누른 채 이동하면 더 멀리(6m)·더 높은 턱(4m)까지 넘는다.
 	/// </summary>
 	private void FixedUpdate()
 	{
@@ -231,43 +241,97 @@ public class AITestDebug : MonoBehaviour
 
 		Vector3 current = playerBody.position;
 		Vector3 step = moveInput * Time.fixedDeltaTime;
-		if (TryWalk(current, step, out Vector3 next)
-			|| TryWalk(current, new Vector3(step.x, 0f, 0f), out next)
-			|| TryWalk(current, new Vector3(0f, 0f, step.z), out next)
-			|| TryHop(current, moveInput.normalized, out next))
+		float hopRange = bigHop ? BigHopRange : HopRange;
+		float hopClimb = bigHop ? BigHopClimb : HopClimb;
+		if (TryStep(current, current + step, out Vector3 next)
+			|| TryStep(current, current + new Vector3(step.x, 0f, 0f), out next)
+			|| TryStep(current, current + new Vector3(0f, 0f, step.z), out next)
+			|| TryHop(current, moveInput.normalized, hopRange, hopClimb, out next))
 		{
 			playerBody.MovePosition(next);
 		}
 		playerBody.MoveRotation(Quaternion.LookRotation(new Vector3(moveInput.x, 0f, moveInput.z)));
 	}
 
+	// 테스트 씬에서는 단차를 느끼지 않게(기획 2026-09-15): 이 맵의 단은 대부분 2m라 걸으면서 그대로 오른다
+	private const float WalkClimb = 2.5f;     // 걸으면서 바로 올라가는 턱 높이
+	private const float HopRange = 3f;        // 막혔을 때 앞으로 넘어가 보는 거리
+	private const float HopClimb = 4f;        // 넘으면서 올라갈 수 있는 높이
+	private const float BigHopRange = 6f;     // Space: 더 멀리
+	private const float BigHopClimb = 6f;     // Space: 더 높이
+	private const float MaxDrop = 15f;        // 이 높이까지는 뛰어내린다
+
+	/// <summary>한 걸음: 가려는 지점의 실제 바닥으로. 2.5m까지는 오르고 높이와 상관없이 내려간다.</summary>
+	private static bool TryStep(Vector3 from, Vector3 target, out Vector3 result)
+	{
+		result = from;
+		Vector3 flat = target - from;
+		flat.y = 0f;
+		if (flat.sqrMagnitude < 0.000001f) { return false; }
+		if (!FindFloor(target, from.y, WalkClimb, out Vector3 floor)) { return false; }
+		// 바닥이 가려는 지점 바로 아래여야 한다 — 벽 너머 바닥으로 튀지 않게(벽 옆 NavMesh는 벽에서 떨어져 있다)
+		if (new Vector2(floor.x - target.x, floor.z - target.z).magnitude > 0.6f) { return false; }
+		// 실제로 앞으로 나아가야 한다. 턱 앞 가장자리로 도로 붙는 것까지 "성공"으로 치면
+		// 넘기를 시도하지 못하고 제자리에 멈춘다(2026-09-15 확인: 2m 단 앞에서 0.3m 가고 멈춤)
+		Vector3 moved = floor - from;
+		moved.y = 0f;
+		if (Vector3.Dot(moved, flat.normalized) < flat.magnitude * 0.5f) { return false; }
+		result = floor;
+		return true;
+	}
+
 	/// <summary>
-	/// 턱 넘기: 이어진 바닥이 끊겨 막혔을 때, 가려는 방향 최대 3m 앞의 바닥으로 바로 옮긴다.
-	/// 이 맵에는 높이 2m 장애물 블록이 많고, 몬스터는 그 사이를 점프 링크로 넘는다 — 테스트 플레이어도 넘을 수 있어야 한다.
-	/// 단, 사이에 있는 물체가 높은 쪽 바닥보다 1m 넘게 솟아 있으면 벽으로 보고 넘지 않는다(2m 블록은 넘고 10m 벽은 못 넘음).
+	/// 턱 넘기: 한 걸음으로 못 가면 가려는 방향 앞의 바닥으로 바로 옮긴다(오르기·내리기 모두).
+	/// 사이에 벽이 있으면 넘지 않는다(<see cref="IsBlockedByTallObject"/>).
 	/// </summary>
-	private static bool TryHop(Vector3 from, Vector3 dir, out Vector3 result)
+	private static bool TryHop(Vector3 from, Vector3 dir, float range, float maxClimb, out Vector3 result)
 	{
 		result = from;
 		dir.y = 0f;
 		if (dir.sqrMagnitude < 0.01f) { return false; }
 		dir.Normalize();
 
-		for (float d = 0.75f; d <= 3f; d += 0.25f)
+		for (float d = 0.75f; d <= range; d += 0.25f)
 		{
 			Vector3 target = from + dir * d;
-			if (!NavMesh.SamplePosition(target, out NavMeshHit hit, 4f, NavMesh.AllAreas)) { continue; }
-			Vector2 off = new Vector2(hit.position.x - target.x, hit.position.z - target.z);
-			if (off.magnitude > 0.6f) { continue; }
-			// 가려는 방향으로 실제로 나아가야 한다 — 바닥 끝으로 도로 붙는 것(뒤쪽 가장자리)은 넘기가 아니다
-			Vector3 moved = hit.position - from;
+			if (!FindFloor(target, from.y, maxClimb, out Vector3 floor)) { continue; }
+			if (new Vector2(floor.x - target.x, floor.z - target.z).magnitude > 0.6f) { continue; }
+			// 가려는 방향으로 실제로 나아가야 한다 — 바닥 끝으로 도로 붙는 것은 넘기가 아니다
+			Vector3 moved = floor - from;
 			moved.y = 0f;
 			if (Vector3.Dot(moved, dir) < d * 0.8f) { continue; }
 
-			float allowedTop = Mathf.Max(from.y, hit.position.y) + 1f;
-			if (IsBlockedByTallObject(from, hit.position, allowedTop)) { return false; }
+			if (IsBlockedByTallObject(from, floor, Mathf.Max(from.y, floor.y) + 1f)) { return false; }
 
-			result = hit.position;
+			result = floor;
+			return true;
+		}
+		return false;
+	}
+
+	/// <summary>
+	/// point의 수직선에서 바닥 찾기: 지금 높이 + maxClimb 위에서 아래로 광선을 쏴, 맞은 면을 위에서부터 보며
+	/// 바로 옆(1m)에 NavMesh가 있는 첫 면을 바닥으로 쓴다. 몸이 있는 것(플레이어·몬스터)·트리거·벽면은 무시.
+	/// </summary>
+	private static bool FindFloor(Vector3 point, float fromY, float maxClimb, out Vector3 floor)
+	{
+		floor = point;
+		Vector3 start = new Vector3(point.x, fromY + maxClimb + 0.3f, point.z);
+		RaycastHit[] hits = Physics.RaycastAll(start, Vector3.down, maxClimb + 0.3f + MaxDrop, ~0, QueryTriggerInteraction.Ignore);
+		System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+		foreach (RaycastHit hit in hits)
+		{
+			if (hit.collider.attachedRigidbody != null || hit.normal.y < 0.5f) { continue; }
+			if (NavMesh.SamplePosition(hit.point, out NavMeshHit nav, 1f, NavMesh.AllAreas) && Mathf.Abs(nav.position.y - hit.point.y) < 1f)
+			{
+				floor = nav.position;
+				return true;
+			}
+		}
+		// 콜라이더 없이 NavMesh만 있는 바닥 대비: 비슷한 높이만 허용
+		if (NavMesh.SamplePosition(point, out NavMeshHit near, 1.2f, NavMesh.AllAreas) && near.position.y <= fromY + maxClimb)
+		{
+			floor = near.position;
 			return true;
 		}
 		return false;
@@ -302,18 +366,6 @@ public class AITestDebug : MonoBehaviour
 			if (hit.collider.attachedRigidbody == null) { return true; }
 		}
 		return false;
-	}
-
-	private static bool TryWalk(Vector3 from, Vector3 step, out Vector3 result)
-	{
-		result = from;
-		if (step.sqrMagnitude < 0.0001f) { return false; }
-		Vector3 target = from + step;
-		if (!NavMesh.SamplePosition(target, out NavMeshHit hit, 4f, NavMesh.AllAreas)) { return false; }
-		Vector2 off = new Vector2(hit.position.x - target.x, hit.position.z - target.z);
-		if (off.magnitude > 0.6f) { return false; }
-		result = hit.position;
-		return true;
 	}
 
 	// ────────────────────────────────────────────────
@@ -417,6 +469,26 @@ public class AITestDebug : MonoBehaviour
 			}
 		}
 		for (; i < orderMarkers.Count; i++) { orderMarkers[i].enabled = false; }
+
+		// 빙 돌아가는 중인 몬스터: 경유 지점(하늘색 원)과 거기까지 가는 선
+		int w = 0;
+		if (d != null)
+		{
+			foreach (MonsterAI m in MonsterAI.activeMonsters)
+			{
+				if (m == null || !m.TryGetWaypoint(out Vector3 wp)) { continue; }
+				while (w + 2 > waypointMarkers.Count)
+				{
+					waypointMarkers.Add(NewLine("Waypoint" + waypointMarkers.Count, WaypointColor, waypointMarkers.Count % 2 == 0));
+				}
+				waypointMarkers[w].enabled = true;
+				SetCircle(waypointMarkers[w], wp, 2.5f);
+				waypointMarkers[w + 1].enabled = true;
+				SetSegment(waypointMarkers[w + 1], m.transform.position, wp);
+				w += 2;
+			}
+		}
+		for (; w < waypointMarkers.Count; w++) { waypointMarkers[w].enabled = false; }
 	}
 
 	/// <summary>
@@ -437,7 +509,7 @@ public class AITestDebug : MonoBehaviour
 				lr.startColor = lr.endColor = col;
 				lr.widthMultiplier = c.chosen ? lineWidth * 1.4f : lineWidth * 0.7f;
 				lr.enabled = true;
-				SetSegment(lr, d.SightingPosition, c.point);
+				SetSegment(lr, d.DebugCandidateOrigin, c.point);
 				i++;
 			}
 		}
@@ -550,23 +622,32 @@ public class AITestDebug : MonoBehaviour
 				foreach (MonsterDirector.CutCandidate c in d.DebugCutCandidates)
 				{
 					if (c.rejected) { continue; }
-					DrawLabel(c.point, (c.chosen ? "▶ " : "") + c.score.ToString("F2"), c.chosen ? CutColor : CandidateColor);
+					// 못 가는 후보는 이유(늦음·관통·겹침)를 함께 — 왜 아무도 안 보냈는지
+					string note = string.IsNullOrEmpty(c.note) ? "" : " " + c.note;
+					DrawLabel(c.point, (c.chosen ? "▶ " : "") + c.score.ToString("F2") + note, c.chosen ? CutColor : CandidateColor);
 				}
 			}
 		}
 
 		// 좌상단 패널
 		StringBuilder sb = new StringBuilder();
-		sb.AppendLine("<b>AI 테스트</b>  WASD 이동(" + testMoveSpeed + ") · Shift 빠르게(" + testFastSpeed + ") · 좌클릭 소리(" + testNoiseRadius + "m)");
+		sb.AppendLine("<b>AI 테스트</b>  WASD 이동(" + testMoveSpeed + ") · Shift 빠르게(" + testFastSpeed + ") · 좌클릭 소리(" + testNoiseRadius + "m, " + testFireInterval + "초 간격) · Space 누른 채 = 큰 턱 넘기");
 		if (d != null)
 		{
-			string hunt = !d.IsHunting ? "대기" : (d.IsLargeHunt ? "큰 포위" : "작은 포위");
-			sb.Append("사냥 <b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (최대 2)");
+			string hunt = "대기";
+			if (d.IsHunting)
+			{
+				List<string> names = new List<string>();
+				foreach (MonsterAI t in d.DebugTeam) { if (t != null) { names.Add(t.name.Replace("Monster_", "")); } }
+				hunt = "사냥 팀 " + string.Join(", ", names);
+			}
+			sb.Append("<b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (최대 2)");
 			if (d.HasSighting)
 			{
 				sb.Append(" · 마지막 목격 <b>" + d.SightingAge.ToString("F1") + "초 전</b> (" + d.SightingSpotterName.Replace("Monster_", "") + ")");
 			}
 			sb.AppendLine();
+			sb.AppendLine("줄줄이 끊음 <b>" + d.DebugFollowBreaks + "</b>회 · " + d.DebugLayoutSummary);
 		}
 		foreach (MonsterAI m in MonsterAI.activeMonsters)
 		{
@@ -576,8 +657,8 @@ public class AITestDebug : MonoBehaviour
 				+ (order.Length > 0 ? "  [" + order + "]" : ""));
 		}
 		sb.Append("<color=#8CD98C>순찰</color> <color=#FF9A1A>이동</color> <color=#FFE633>수색</color> <color=#FF4040>추격</color> "
-			+ "<color=#D966FF>차단</color> <color=#4DCCFF>복귀</color> 기절 · <color=#D966FF>○</color> 차단 지점 <color=#FFE633>○</color> 수색 지점 <color=#FF4D4D>✕</color> 마지막 목격");
-		GUI.Box(new Rect(10, 10, 560, 60 + MonsterAI.activeMonsters.Count * 20 + 20), sb.ToString(), panelStyle);
+			+ "<color=#D966FF>차단</color> <color=#4DCCFF>복귀</color> 기절 · <color=#D966FF>○</color> 차단 지점 <color=#59D9FF>○</color> 경유 지점(빙 돌아가기) <color=#FFE633>○</color> 수색 지점 <color=#FF4D4D>✕</color> 마지막 목격");
+		GUI.Box(new Rect(10, 10, 640, 80 + MonsterAI.activeMonsters.Count * 20 + 20), sb.ToString(), panelStyle);
 	}
 
 	private void DrawLabel(Vector3 world, string text, Color color)
