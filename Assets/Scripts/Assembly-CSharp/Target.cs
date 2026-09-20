@@ -30,6 +30,9 @@ public class Target : MonoBehaviour
 	private int burstCount = 30;
 
 	private bool isDestroyed;
+	public float PlacementHeight { get; private set; } = -1f;
+	public Vector3 ShootingPosition { get; private set; }
+	public void SetPlacement(float height, Vector3 shootingPosition) { PlacementHeight = height; ShootingPosition = shootingPosition; }
 
 	public void OnHit()
 	{
@@ -47,6 +50,7 @@ public class Target : MonoBehaviour
 		// 발사체가 날아오는 사이 두 번 맞을 수 있다
 		if (isDestroyed) { return; }
 		isDestroyed = true;
+		PlaytestRecorder.Record("target_destroyed", "target_" + GetInstanceID(), transform.position, "height=" + PlacementHeight.ToString(System.Globalization.CultureInfo.InvariantCulture), shotPosition);
 
 		if (TargetManager.Instance != null)
 		{

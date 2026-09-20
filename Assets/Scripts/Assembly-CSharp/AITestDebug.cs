@@ -539,7 +539,9 @@ public class AITestDebug : MonoBehaviour
 		bool show = d != null && d.IsHunting;
 		if (show)
 		{
-			foreach (KeyValuePair<MonsterAI, MonsterDirector.RouteInfo> kv in d.DebugRoutes)
+			var visibleRoutes = new List<KeyValuePair<MonsterAI, MonsterDirector.RouteInfo>>(d.DebugRoutes);
+			visibleRoutes.AddRange(d.DebugPreparations);
+			foreach (KeyValuePair<MonsterAI, MonsterDirector.RouteInfo> kv in visibleRoutes)
 			{
 				MonsterDirector.RouteInfo r = kv.Value;
 				if (kv.Key == null || r == null || r.corners == null || r.corners.Length < 2) { continue; }
@@ -601,6 +603,7 @@ public class AITestDebug : MonoBehaviour
 		case MonsterAI.State.Return: return new Color(0.3f, 0.8f, 1f);
 		case MonsterAI.State.Stun: return Color.white;
 		case MonsterAI.State.Intercept: return CutColor;
+		case MonsterAI.State.Prepare: return new Color(1f, .8f, .25f);
 		}
 		return Color.gray;
 	}
@@ -701,7 +704,7 @@ public class AITestDebug : MonoBehaviour
 				foreach (MonsterAI t in d.DebugTeam) { if (t != null) { names.Add(t.name.Replace("Monster_", "")); } }
 				hunt = "사냥 팀 " + string.Join(", ", names);
 			}
-			sb.Append("<b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (최대 2)");
+			sb.Append("<b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (압박 1 + 별도 진입 최대 2)");
 			if (d.HasSighting)
 			{
 				sb.Append(" · 마지막 목격 <b>" + d.SightingAge.ToString("F1") + "초 전</b> (" + d.SightingSpotterName.Replace("Monster_", "") + ")");

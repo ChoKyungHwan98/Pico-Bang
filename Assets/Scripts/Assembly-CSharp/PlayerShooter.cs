@@ -154,6 +154,8 @@ public class PlayerShooter : MonoBehaviour
 		Vector3 impactPoint = origin + firePoint.forward * range;
 		bool didHit = Physics.Raycast(origin, firePoint.forward, out RaycastHit hitInfo, range, targetLayer);
 
+		PlaytestRecorder.Record("shot", "player", shotPosition, didHit ? hitInfo.collider.name : "miss", impactPoint);
+
 		MonsterAI hitMonster = null;
 		Target hitTarget = null;
 		if (didHit)

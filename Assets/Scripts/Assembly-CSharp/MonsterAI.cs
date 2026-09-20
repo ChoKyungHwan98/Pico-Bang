@@ -5,24 +5,10 @@ using UnityEngine;
 using UnityEngine.AI;
 
 /// <summary>
-/// 몬스터 한 마리의 행동. 플랫 FSM.
-///
-/// 몬스터는 전역 1 + 구역 4. <b>모두 이 같은 FSM을 쓴다.</b> 전역 몬스터의 차이는 넓은 순찰과 좋은 청각뿐이다.
-/// 무리를 어떻게 움직일지는 <see cref="MonsterDirector"/>(보이지 않는 감독, 두 번째 뇌)가 정하고,
-/// 이 클래스는 명령(수색 / 차단 / 해제)과 흐린 목적지만 받아 기존 상태로 수행한다.
-///
-/// 행동 규칙 (기획 2026-09-14):
-///   평상시              → 순찰 (구역 몬스터는 자기 구역, 전역 몬스터는 맵 전체)
-///   플레이어를 직접 봄  → 추격 + 감독에게 보고 → 사냥 팀 3마리(발견자 포함)
-///   시야를 놓침(모퉁이)  → 곧바로 수색하지 않고 감독의 흐린 힌트로 <b>끈질김 시간</b>만큼 더 쫓는다.
-///                         놓칠 때마다 끈질김이 줄어든다(6 → 4.2 → 2.9초…). 다 떨어지면 잠깐 두리번 → 빠르게 복귀
-///   소리를 들음         → 멈칫하며 소리 쪽을 본 뒤 그 근처로 달려간다 (한 소리에 가까운 2마리까지)
-///   (감독) 차단         → 플레이어가 향하는 쪽 길에 가서 막는다, 가까이 오면 덮침
-///   사냥 종료           → 구역 밖이면 매우 빠르게 복귀
-///   레이저 피격         → 기절
-///
-/// 정보는 한 방향: 감독은 진짜 위치를 알지만 몬스터에게는 흐린 목적지만 준다.
-/// 몬스터가 플레이어의 정확한 현재 위치를 쓰는 것은 <b>자기 눈으로 보고 있을 때</b>뿐이다.
+/// One monster's movement, sight, pursuit memory, return and stun FSM.
+/// MonsterDirector jointly selects participants and compatible NavMesh routes.
+/// Only the pressure pursuer follows live sightings; supports execute their assigned corridor.
+/// Fresh sightings/shots refresh tracking; without evidence the hunt expires.
 /// </summary>
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(Animator))]
@@ -51,7 +37,8 @@ public class MonsterAI : MonoBehaviour
 		Investigate = 2,
 		Return = 3,
 		Stun = 4,
-		Intercept = 5
+		Intercept = 5,
+		Prepare = 6
 	}
 
 	/// <summary>AI 테스트 씬: 몬스터가 플레이어를 보지 못하게 한다.</summary>
@@ -166,48 +153,60 @@ public class MonsterAI : MonoBehaviour
 
 	[Header("6. 조정자(Director) — 전역 몬스터의 값만 사용됨")]
 	[Tooltip("동시에 직접 쫓는 최대 마릿수")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public int maxSimultaneousChasers = 2;
 
-	[Tooltip("사냥 팀 마릿수(발견자 포함). 발견자가 쫓고 나머지는 앞길·옆길을 막는다")]
+	[Tooltip("최대 사냥 팀 크기(1~3). 압박 1 + 서로 다른 진입 경로가 있는 지원 최대 2")]
 	public int huntTeamSize = 3;
 
 	[Tooltip("팀 밖 몬스터가 가장 먼 차단 팀원보다 이 비율만큼 가까우면 교대(0~1). 도망친 쪽 구역 몬스터가 앞길로 올라온다")]
 	[Range(0.1f, 1f)]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float teamSwapRatio = 0.6f;
 
 	[Tooltip("경로 겹침이 이 비율을 넘으면 대체 경로(경유지)를 찾는다. 0=늘 우회, 1=절대 우회 안 함")]
 	[Range(0f, 1f)]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float routeOverlapThreshold = 0.45f;
 
 	[Tooltip("두 경로가 이 거리 안이면 '같은 길'로 본다(m)")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float routeNearDistance = 3f;
 
 	[Tooltip("플레이어 이 반경 안은 겹침 판정에서 제외한다(m). 모든 경로가 플레이어에서 만나므로 " +
 		"빼지 않으면 지워지지 않는 바닥값이 생긴다. 다만 넓게 빼면 공유 통로가 묻히므로 주의")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float convergenceExcludeRadius = 8f;
 
 	[Tooltip("차단 후보: 플레이어에게서 8방향으로 바닥을 따라 최대 이만큼 뻗어 본다(m)")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float cutCandidateMaxDistance = 18f;
 
 	[Tooltip("차단 후보: 이만큼도 못 가고 막히는 방향은 버린다(m)")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float cutCandidateMinDistance = 6f;
 
 	[Tooltip("차단 후보: 서로 이 거리 안이면 하나로 합친다(m). 너무 크면 막을 방향이 서너 개로 줄어 포위가 한쪽으로 몰린다")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float cutCandidateMergeDistance = 6f;
 
 	[Tooltip("차단 대기 몬스터가 덮치려 할 때, 가장 먼 추격자보다 이만큼 이상 가까워야 교대한다(m)")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float swapDistanceMargin = 3f;
 
 	[Tooltip("차단하러 가는 길이 플레이어 이 반경 안을 지나면 비싸게 친다 — 뚫고 가면 결국 뒤를 쫓는 꼴")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float crossingAvoidRadius = 6f;
 
 	[Tooltip("감독이 차단 목적지를 흐리는 반경(m). 몬스터에게 정확한 좌표를 주지 않는다")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float hintBlurRadius = 4f;
 
 	[Tooltip("추격자가 놓쳤을 때 감독이 주는 힌트의 흐림 반경(m)")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float pursuitHintBlur = 3f;
 
-	[Tooltip("추격자가 아무도 없고 마지막 목격 후 이 시간이 지나면 사냥 종료(초)")]
+	[Tooltip("마지막 목격 또는 사격 정보 이후 이 시간이 지나면 사냥 종료(초)")]
 	public float huntMemory = 8f;
 
 	[Tooltip("차단 배치를 다시 계산하는 주기(초)")]
@@ -247,35 +246,43 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("사냥 속도: 이 거리(m) 밖이면 먼 속도. 사이는 부드럽게 바뀐다")]
 	public float huntFarDistance = 40f;
 
-	[Tooltip("빙 돌아가기: 돌아가는 데 이 시간(초)을 넘으면 우회하지 않고 자기 쪽에서 접근한다. 사냥 유지 시간과 맞춰 8초")]
+	[Tooltip("지원 경로의 최대 도착 시간(초). 초과하거나 추격 통로와 겹치면 지원에 뽑지 않는다")]
 	public float detourTimeLimit = 8f;
 
 	[Tooltip("빙 돌아가기: 플레이어에게서 이 거리(m)에 경유 지점을 잡는다. 여기를 먼저 들른 뒤 막을 자리로 간다")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float detourWaypointDistance = 22f;
 
 	[Tooltip("들어오는 쪽을 가르는 기준 각도. 차단 몬스터는 추격자와, 그리고 서로 이 각도 이상 다른 쪽에서 들어온다")]
 	[Range(30f, 150f)]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float sideAngleMin = 90f;
 
 	[Tooltip("흩어짐: 이 시간(초) 동안 조인 뒤 흩어진다. 팩맨의 스캐터 — 추격이 길어져도 다 같이 몰리지 않게")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float scatterAfter = 20f;
 
 	[Tooltip("흩어짐: 물러나 있는 시간(초). 이 동안 추격자만 계속 쫓고, 막던 몬스터는 자기 구역으로 돌아간다")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float scatterTime = 6f;
 
 	[Tooltip("흩어짐: 물러난 몬스터를 다시 부르지 않는 시간(초). 왔다 갔다 방지")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float scatterRejoinBlock = 8f;
 
 	[Tooltip("추격 인계: 추격자가 자기 구역 밖(반경 ×1.2)에 이 시간(초) 이상 머무르면, 플레이어가 있는 구역 몬스터가 이어받는다")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float handoverDelay = 3f;
 
-	[Tooltip("복귀 순간이동: 플레이어에게 보이지 않는 상태가 이 시간(초) 이어지면 구역으로 옮긴다")]
+	[HideInInspector] // Legacy scene data. Gameplay teleportation has been removed.
 	public float teleportUnseenTime = 3f;
 
 	[Tooltip("복귀 순간이동: 플레이어와 이 거리(m) 밖일 때만. 출발·도착 모두 보이지 않아야 한다")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float teleportMinDistance = 40f;
 
 	[Tooltip("복귀 순간이동 판정에 쓰는 플레이어 시야각(도). 이 안이고 가려지지 않았으면 '보인다'로 친다")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float playerViewAngle = 90f;
 
 	[Header("7. Jump (단차 이동)")]
@@ -285,22 +292,27 @@ public class MonsterAI : MonoBehaviour
 
 	[Header("8. 차단 대기 (감독이 지시)")]
 	[Tooltip("차단 대기 중 플레이어가 이 거리 안에 보이면 덮친다")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float ambushEngageRange = 8f;
 
 	[Tooltip("차단 명령이 이 시간 동안 갱신되지 않으면 포기하고 복귀한다(초)")]
 	public float interceptTimeout = 12f;
 
 	[Tooltip("추격↔차단 역할이 바뀐 직후 다시 바뀌지 않는 시간(초)")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float roleLockTime = 2f;
 
 	[Tooltip("경유지에 이 거리 안으로 들어오면 지난 것으로 보고 최종 접근으로 넘어간다(m)")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float waypointReachedDistance = 3f;
 
 	[Tooltip("최종 접근 중 플레이어 위치를 다시 조준하는 간격(초). 0이면 매 프레임")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float finalApproachRefresh = 0.15f;
 
 	[Tooltip("플레이어에게 이 거리 안까지 붙었으면 감독이 경로를 갈아엎지 않는다(m). " +
 		"거의 닿았는데 갑자기 딴 길로 돌아가는 것을 막는다. 멀리 있을 때는 잠기지 않아야 겹침 배정이 계속 돈다")]
+	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float routeLockDistance = 12f;
 
 	public static List<MonsterAI> activeMonsters = new List<MonsterAI>();
@@ -333,6 +345,27 @@ public class MonsterAI : MonoBehaviour
 	private Vector3 startPosition;
 
 	private Quaternion startRotation;
+	private Transform generatedHome;
+	private Transform originalZoneCenter;
+	private float originalZoneRadius;
+	public bool IsGuardingReturnEncounter { get; private set; }
+	public bool HasCloseVisibleEncounter => !isStunned && !isJumping && player != null &&
+		Vector3.Distance(transform.position, player.position) <= 8f && CheckSight();
+
+	public bool ReleaseReturnLockForEncounter()
+	{
+		if (currentState != State.Return || !HasCloseVisibleEncounter || agent == null || !agent.enabled || !agent.isOnNavMesh) return false;
+		homeLockUntil = 0f;
+		givingUp = false;
+		return true;
+	}
+
+	public void RefreshAssignedHome()
+	{
+		if (currentState == State.Patrol) { CommandGoHome(0f); return; }
+		if (currentState == State.Return && agent != null && agent.enabled && agent.isOnNavMesh)
+			agent.SetDestination(zoneCenter.position);
+	}
 
 	// 지점을 향해 달려가는 중인가. 수색 상태를 벗어나면 꺼진다.
 	private bool isRushing;
@@ -346,7 +379,37 @@ public class MonsterAI : MonoBehaviour
 	// 최종 접근: 경유지를 지났고, 이제 플레이어의 현재 위치를 계속 따라간다
 	private bool finalApproach;
 
-	private float nextFinalRefresh;
+	private Vector3[] tacticalCorners;
+	private int tacticalIndex;
+	private Vector3 tacticalVia;
+	private bool tacticalHasVia;
+	private float nextRouteFailureReport;
+	private NavMeshQueryFilter cachedNavigationFilter;
+	private int navigationFilterFrame = -1;
+
+	public bool IsHomeLocked => Time.time < homeLockUntil;
+	public bool IsTraversingLink => isJumping;
+	public int NavigationCostKey { get; private set; }
+	public bool CanReceiveTactics => !isStunned && !isJumping && !IsHomeLocked && agent != null && agent.enabled && agent.isOnNavMesh;
+	public NavMeshQueryFilter NavigationFilter
+	{
+		get
+		{
+			if (navigationFilterFrame == Time.frameCount) { return cachedNavigationFilter; }
+			var filter = new NavMeshQueryFilter { agentTypeID = agent.agentTypeID, areaMask = agent.areaMask };
+			int costKey = 17;
+			for (int i = 0; i < 32; i++)
+			{
+				float cost = agent.GetAreaCost(i);
+				filter.SetAreaCost(i, cost);
+				costKey = unchecked(costKey * 31 + cost.GetHashCode());
+			}
+			NavigationCostKey = costKey;
+			cachedNavigationFilter = filter;
+			navigationFilterFrame = Time.frameCount;
+			return filter;
+		}
+	}
 
 	private Collider myCollider;
 
@@ -422,7 +485,7 @@ public class MonsterAI : MonoBehaviour
 
 	/// <summary>감독의 명령(수색·차단)을 받을 수 있는가. 직접 쫓는 중·기절·점프 중이면 제외.</summary>
 	public bool IsAvailableForOrders =>
-		currentState != State.Chase && currentState != State.Stun && !isJumping;
+		currentState != State.Chase && CanReceiveTactics;
 
 	/// <summary>경유지를 지나 플레이어에게 곧장 들어가는 중인가. 이 동안은 멈추지 않는다.</summary>
 	public bool IsFinalApproach => finalApproach && currentState == State.Intercept;
@@ -457,9 +520,10 @@ public class MonsterAI : MonoBehaviour
 			case State.Investigate:
 				if (givingUp) { return "놓침"; }
 				return (isRushing && !HasArrived()) ? "이동" : "수색";
-			case State.Return: return "복귀";
+			case State.Return: return IsGuardingReturnEncounter ? "복귀 중 근접 경계" : "복귀";
 			case State.Stun: return "기절";
 			case State.Intercept: return hasWaypoint ? "우회 이동" : (finalApproach ? "최종 접근" : "접근");
+			case State.Prepare: return PreparationAtGoal ? "통로 경계" : "다음 통로 이동";
 			}
 			return currentState.ToString();
 		}
@@ -496,6 +560,11 @@ public class MonsterAI : MonoBehaviour
 		if (playerPassThrough) { SetPlayerPassThrough(false); }
 	}
 
+	private void OnDestroy()
+	{
+		if (generatedHome != null) { Destroy(generatedHome.gameObject); }
+	}
+
 	private void Start()
 	{
 		if (player == null)
@@ -507,12 +576,17 @@ public class MonsterAI : MonoBehaviour
 			navMeshData = NavMesh.CalculateTriangulation();
 			isNavMeshDataLoaded = true;
 		}
-		if (zoneCenter == null)
+		if (zoneCenter == null || zoneCenter.IsChildOf(transform))
 		{
+			// Some existing scenes point the global monster's home at its own moving transform.
+			Vector3 homePosition = zoneCenter != null ? zoneCenter.position : transform.position;
 			GameObject gameObject = new GameObject(base.name + "_Home");
-			gameObject.transform.position = base.transform.position;
+			gameObject.transform.position = homePosition;
 			zoneCenter = gameObject.transform;
+			generatedHome = zoneCenter;
 		}
+		originalZoneCenter = zoneCenter;
+		originalZoneRadius = zoneRadius;
 		agent.acceleration = patrolAcceleration;
 		agent.angularSpeed = angularSpeed;
 		agent.stoppingDistance = stoppingDistance;
@@ -530,6 +604,11 @@ public class MonsterAI : MonoBehaviour
 
 	public void ResetMonster()
 	{
+		if (originalZoneCenter != null) { zoneCenter = originalZoneCenter; zoneRadius = originalZoneRadius; }
+		IsGuardingReturnEncounter = false;
+		StopAllCoroutines();
+		if (playerPassThrough) { SetPlayerPassThrough(false); }
+		agent.updateRotation = true;
 		base.enabled = true;
 		if (agent.isOnNavMesh)
 		{
@@ -548,6 +627,8 @@ public class MonsterAI : MonoBehaviour
 		pendingNoise = false;
 		hasWaypoint = false;
 		finalApproach = false;
+		tacticalCorners = null;
+		tacticalHasVia = false;
 		noiseReactReadyAt = 0f;
 		homeLockUntil = 0f;
 		checkingCorner = false;
@@ -601,7 +682,7 @@ public class MonsterAI : MonoBehaviour
 	public bool CanHearNoise(Vector3 soundPosition, float noiseRadius, out float distance)
 	{
 		distance = Vector3.Distance(base.transform.position, soundPosition);
-		if (currentState == State.Chase || currentState == State.Intercept || isStunned || givingUp)
+		if (currentState == State.Chase || currentState == State.Intercept || currentState == State.Prepare || isStunned || givingUp || IsHomeLocked)
 		{
 			return false;
 		}
@@ -691,95 +772,115 @@ public class MonsterAI : MonoBehaviour
 		RushToInvestigate(point);
 	}
 
-	/// <summary>차단 명령: 지점으로 가서 막는다. 이미 차단 중이면 지점만 옮긴다. 명령이 갱신되는 동안은 포기하지 않는다.</summary>
-	public void CommandAmbush(Vector3 point)
+	/// <summary>The director alone chooses the pressure pursuer. Replans do not reset lost-sight persistence.</summary>
+	public void CommandPressure(Vector3 knownPosition)
 	{
-		CommandAmbush(point, point, false);
-	}
-
-	/// <summary>
-	/// 빙 돌아가는 차단 명령: 경유 지점을 먼저 들른 뒤 차단 지점으로 간다.
-	/// 플레이어를 뚫고 가는 대신 반대편으로 돌아 들어오게 한다(기획 2026-09-17).
-	/// </summary>
-	public void CommandAmbush(Vector3 point, Vector3 waypoint, bool viaWaypoint)
-	{
-		if (isStunned) { return; }
-		pendingNoise = false;
-		givingUp = false;
-		interceptPoint = point;
-		interceptTimer = interceptTimeout;
-		if (viaWaypoint && Vector3.Distance(base.transform.position, waypoint) > WaypointReached)
-		{
-			interceptWaypoint = waypoint;
-			hasWaypoint = true;
-		}
-		else if (!viaWaypoint)
-		{
-			hasWaypoint = false;
-			finalApproach = false;
-		}
-		if (currentState == State.Intercept)
-		{
-			UpdateInterceptDestination();
-			return;
-		}
+		if (!CanReceiveTactics) { return; }
+		tacticalCorners = null;
+		hasWaypoint = false;
 		finalApproach = false;
-		roleLockUntil = Time.time + roleLockTime;
-		ChangeState(State.Intercept);
+		if (currentState != State.Chase)
+		{
+			lastKnownPos = knownPosition;
+			StartChase();
+			agent.SetDestination(knownPosition);
+		}
 	}
 
-	/// <summary>
-	/// 추적 명령(2026-09-20 개편). 목적지는 언제나 플레이어다 — 감독이 정하는 것은 "어느 길로"뿐이다.
-	/// 경유지가 있으면 그쪽을 먼저 들르고, 지나면 최종 접근으로 넘어가 멈추지 않고 플레이어를 따라간다.
-	/// 차단 지점에 가서 기다리던 예전 방식(CommandAmbush)을 대체한다.
-	/// </summary>
-	public void CommandPursue(Vector3 waypoint, bool viaWaypoint)
+	/// <summary>New evidence refreshes tracking. Repeating an old plan does not.</summary>
+	public void RefreshPursuitEvidence(Vector3 position)
 	{
-		if (isStunned) { return; }
+		if (currentState != State.Chase) { return; }
+		lastKnownPos = cornerPos = position;
+		checkingCorner = false;
+		if (lostSight)
+		{
+			pursuitTimer = Mathf.Max(pursuitTimer, MonsterDirector.Instance.PersistenceMin);
+		}
+	}
+
+	/// <summary>Follow the assigned corridor corners. Never replace them with a live-player shortest path.</summary>
+	public void CommandTacticalRoute(Vector3[] corners, Vector3 via, bool detour)
+	{
+		if (!CanReceiveTactics || corners == null || corners.Length < 2) { return; }
 		pendingNoise = false;
 		givingUp = false;
-		interceptTimer = interceptTimeout;
-		if (viaWaypoint && Vector3.Distance(base.transform.position, waypoint) > WaypointReached)
-		{
-			interceptWaypoint = waypoint;
-			hasWaypoint = true;
-			finalApproach = false;
-		}
-		else
-		{
-			hasWaypoint = false;
-			finalApproach = true;
-		}
-		if (player != null) { interceptPoint = player.position; }
-		if (currentState == State.Intercept)
-		{
-			UpdateInterceptDestination();
-			return;
-		}
-		roleLockUntil = Time.time + roleLockTime;
-		ChangeState(State.Intercept);
+		checkingCorner = false;
+		tacticalCorners = corners;
+		tacticalIndex = 1;
+		tacticalVia = via;
+		tacticalHasVia = detour;
+		interceptPoint = corners[corners.Length - 1];
+		interceptTimer = Mathf.Max(2f, interceptTimeout);
+		if (currentState != State.Intercept) { ChangeState(State.Intercept); }
+		else { UpdateInterceptDestination(); }
 	}
 
-	/// <summary>경유 지점이 남아 있으면 그쪽으로, 다 들렀으면 차단 지점으로.</summary>
+	public bool TryGetTacticalWaypoint(out Vector3 point)
+	{
+		point = tacticalVia;
+		return currentState == State.Intercept && tacticalHasVia && Vector3.Distance(transform.position, tacticalVia) > 2f;
+	}
+
+	/// <summary>Walk to a reserved approach. No home lock, teleport, or unchecked pursuit fallback.</summary>
+	public void CommandPreparation(Vector3[] corners)
+	{
+		if (!CanReceiveTactics || corners == null || corners.Length < 2) return;
+		pendingNoise = givingUp = checkingCorner = false;
+		tacticalCorners = corners; tacticalIndex = 1;
+		tacticalHasVia = false;
+		interceptPoint = corners[corners.Length - 1];
+		if (currentState != State.Prepare) ChangeState(State.Prepare);
+		else UpdateInterceptDestination();
+		if (Vector3.SqrMagnitude(interceptPoint - transform.position) < .04f)
+		{
+			agent.ResetPath(); agent.isStopped = true; agent.velocity = Vector3.zero;
+		}
+	}
+
+	public bool PreparationAtGoal => currentState == State.Prepare && !hasWaypoint && HasArrived();
+
+	private void ProcessPreparation(bool canSee)
+	{
+		if (tacticalCorners == null) { CommandGoHome(0f); return; }
+		if (hasWaypoint && Vector3.Distance(transform.position, interceptWaypoint) < 1.25f) UpdateInterceptDestination();
+		// remainingDistance ends at the current corner, not the final preparation point.
+		// Stopping within the arrival margin can strand us before a wall corner can be rounded.
+		if (!hasWaypoint && HasArrived())
+		{
+			agent.isStopped = true;
+			if (canSee)
+			{
+				Vector3 direction = player.position - transform.position; direction.y = 0;
+				if (direction.sqrMagnitude > .01f) transform.rotation = Quaternion.RotateTowards(
+					transform.rotation, Quaternion.LookRotation(direction), angularSpeed * Time.deltaTime);
+			}
+		}
+		if (canSee && HasCloseVisibleEncounter && Time.time >= nextRouteFailureReport)
+		{
+			nextRouteFailureReport = Time.time + .3f;
+			MonsterDirector.Instance?.InvalidateRoute(this);
+		}
+	}
+
 	private void UpdateInterceptDestination()
 	{
-		if (hasWaypoint)
+		if (tacticalCorners == null || tacticalIndex >= tacticalCorners.Length) { return; }
+		// Crossing a corner only counts when the next corner is directly traversable (no wall cutting).
+		while (tacticalIndex < tacticalCorners.Length - 1 &&
+			(Vector3.Distance(transform.position, tacticalCorners[tacticalIndex]) < .4f ||
+			(Vector3.Distance(transform.position, tacticalCorners[tacticalIndex]) < 1.25f &&
+			!NavMesh.Raycast(transform.position, tacticalCorners[tacticalIndex + 1], out _, NavigationFilter))))
 		{
-			if (Vector3.Distance(base.transform.position, interceptWaypoint) > WaypointReached)
-			{
-				agent.SetDestination(interceptWaypoint);
-				return;
-			}
-			hasWaypoint = false;
-			finalApproach = true;
+			tacticalIndex++;
 		}
-		// 최종 접근: 낡은 좌표가 아니라 플레이어의 지금 위치로
-		if (finalApproach && player != null)
-		{
-			interceptPoint = player.position;
-			nextFinalRefresh = Time.time + Mathf.Max(0f, finalApproachRefresh);
-		}
-		agent.SetDestination(interceptPoint);
+		if (tacticalHasVia && Vector3.Distance(transform.position, tacticalVia) < 2f) { tacticalHasVia = false; }
+		hasWaypoint = tacticalIndex < tacticalCorners.Length - 1;
+		finalApproach = !hasWaypoint;
+		interceptWaypoint = tacticalCorners[tacticalIndex];
+		agent.stoppingDistance = hasWaypoint ? .15f : stoppingDistance;
+		agent.autoBraking = !hasWaypoint;
+		agent.SetDestination(interceptWaypoint);
 	}
 
 	/// <summary>AI 테스트 씬 표시용: 지금 돌아가는 중인 경유 지점(없으면 false).</summary>
@@ -802,24 +903,15 @@ public class MonsterAI : MonoBehaviour
 		hasWaypoint = false;
 		finalApproach = false;
 		homeLockUntil = Time.time + Mathf.Max(0f, lockSeconds);
-		ChangeState(IsOutsideZone() ? State.Return : State.Patrol);
-	}
-
-	/// <summary>감독이 플레이어에게 보이지 않는 곳에서만 부르는 복귀 순간이동.</summary>
-	public void TeleportTo(Vector3 position)
-	{
-		if (agent == null) { return; }
-		agent.Warp(position);
-		agent.ResetPath();
-		hasWaypoint = false;
-		finalApproach = false;
-		ChangeState(State.Patrol);
+		tacticalCorners = null;
+		ChangeState(State.Return);
+		if (zoneCenter != null && agent.isOnNavMesh) { agent.SetDestination(zoneCenter.position); }
 	}
 
 	/// <summary>해제 명령: 사냥이 끝났다 — 차단·수색을 멈추고 구역으로 돌아간다. 직접 쫓는 중이면 무시.</summary>
 	public void CommandRelease()
 	{
-		if (currentState == State.Intercept || currentState == State.Investigate)
+		if (currentState == State.Intercept || currentState == State.Prepare || currentState == State.Investigate)
 		{
 			givingUp = false;
 			ChangeState(IsOutsideZone() ? State.Return : State.Patrol);
@@ -847,7 +939,7 @@ public class MonsterAI : MonoBehaviour
 			agent.isStopped = false;
 		}
 		HandlePhysicsAndTimers();
-		if (currentState == State.Stun)
+		if (currentState == State.Stun || isJumping)
 		{
 			return;
 		}
@@ -871,6 +963,7 @@ public class MonsterAI : MonoBehaviour
 			agent.acceleration = chaseAcceleration;
 			break;
 		case State.Intercept:
+		case State.Prepare:
 			agent.speed = HuntMoveSpeed;
 			agent.acceleration = chaseAcceleration;
 			break;
@@ -915,6 +1008,9 @@ public class MonsterAI : MonoBehaviour
 
 		switch (currentState)
 		{
+		case State.Prepare:
+			ProcessPreparation(canSee);
+			break;
 		case State.Intercept:
 			ProcessIntercept(canSee);
 			break;
@@ -982,9 +1078,11 @@ public class MonsterAI : MonoBehaviour
 	private IEnumerator ProcessStunReaction(Vector3 shooterPosition)
 	{
 		isStunned = true;
+		PlaytestRecorder.Record("monster_stunned", name, transform.position);
 		pendingNoise = false;
 		stateBeforeStun = currentState;
 		ChangeState(State.Stun);
+		MonsterDirector.Instance?.InvalidateRoute(this);
 		agent.isStopped = true;
 		agent.velocity = Vector3.zero;
 		agent.updateRotation = false;
@@ -1021,52 +1119,21 @@ public class MonsterAI : MonoBehaviour
 		// 충돌 복구만 따로 기다린다. AI는 곧바로 깨어난다 —
 		// 코루틴 본문에서 기다리면 플레이어가 몸 안에 서 있는 동안 몬스터가 계속 굳어 있다(QA 2026-09-20).
 		if (playerPassThrough) { StartCoroutine(RestoreCollisionWhenClear()); }
-		if (stateBeforeStun == State.Chase)
+		ChangeState(State.Return);
+		MonsterDirector.Instance?.InvalidateRoute(this);
+		if (CheckSight())
 		{
-			// 기절 전 쫓던 개체는 다시 허가를 받아 추적을 이어간다(끈질김은 남은 만큼). 자리가 없으면 감독이 막는 역할을 준다
-			if (!TryStartChase() && currentState == State.Stun)
-			{
-				ChangeState(IsOutsideZone() ? State.Return : State.Patrol);
-			}
-		}
-		else if (CheckSight())
-		{
-			if (!TryStartChase() && currentState == State.Stun)
-			{
-				ChangeState(stateBeforeStun);
-			}
-		}
-		else
-		{
-			ChangeState(stateBeforeStun);
+			MonsterDirector.Instance?.ReportSighting(this, player.position);
+			TryStartChase();
 		}
 	}
 
 	private void ProcessPatrol(bool canSee)
 	{
-		if (canSee)
-		{
-			TryStartChase();
-		}
-		else
-		{
-			if (agent.pathPending || !(agent.remainingDistance <= agent.stoppingDistance))
-			{
-				return;
-			}
-			if (patrolWaitTime > 0f)
-			{
-				stateTimer -= Time.deltaTime;
-				if (stateTimer <= 0f)
-				{
-					PickNewDestination();
-				}
-			}
-			else
-			{
-				PickNewDestination();
-			}
-		}
+		if (canSee && TryStartChase()) { return; }
+		if (agent.pathPending || (agent.hasPath && agent.remainingDistance > agent.stoppingDistance)) { return; }
+		stateTimer -= Time.deltaTime;
+		if (patrolWaitTime <= 0f || stateTimer <= 0f) { PickNewDestination(); }
 	}
 
 	/// <summary>
@@ -1180,75 +1247,65 @@ public class MonsterAI : MonoBehaviour
 	/// </summary>
 	private void ProcessIntercept(bool canSee)
 	{
-		if (hasWaypoint && Vector3.Distance(base.transform.position, interceptWaypoint) <= WaypointReached)
+		if (canSee && !hasWaypoint && Time.time >= nextRouteFailureReport)
 		{
-			// 경유지 통과 — 여기서부터 최종 접근이다
-			hasWaypoint = false;
-			finalApproach = true;
+			nextRouteFailureReport = Time.time + .25f;
+			MonsterDirector.Instance?.RefreshCloseApproach(this);
+		}
+		interceptTimer -= Time.deltaTime;
+		if (interceptTimer <= 0f || tacticalCorners == null)
+		{
+			CommandGoHome(2f);
+			MonsterDirector.Instance?.InvalidateRoute(this);
+			return;
+		}
+		if (!agent.pathPending && (agent.pathStatus != NavMeshPathStatus.PathComplete || !agent.hasPath))
+		{
+			if (Time.time >= nextRouteFailureReport)
+			{
+				nextRouteFailureReport = Time.time + .5f;
+				MonsterDirector.Instance?.InvalidateRoute(this);
+			}
+		}
+		if (hasWaypoint && Vector3.Distance(transform.position, interceptWaypoint) < 1.25f)
+		{
 			UpdateInterceptDestination();
 		}
-		if (canSee && Vector3.Distance(base.transform.position, player.position) <= ambushEngageRange)
+		// At a stale endpoint, request a new joint assignment; do not acquire an unchecked shortest path.
+		if (!hasWaypoint && HasArrived() && Time.time >= nextRouteFailureReport)
 		{
-			// 덮치기도 허가제: 자리가 없으면 거부되지만, 아래 최종 접근으로 계속 밀고 들어간다
-			lastKnownPos = player.position;
-			if (TryStartChase())
-			{
-				return;
-			}
-		}
-
-		if (finalApproach)
-		{
-			// 멈추지 않는다. 낡은 좌표가 아니라 플레이어의 지금 위치를 계속 다시 조준한다(기획 2026-09-20)
-			if (player != null && Time.time >= nextFinalRefresh)
-			{
-				nextFinalRefresh = Time.time + Mathf.Max(0f, finalApproachRefresh);
-				interceptPoint = player.position;
-				agent.SetDestination(interceptPoint);
-			}
-		}
-		else if (HasArrived())
-		{
-			// 경유지로 가는 길이 막혀 멈춘 경우에만 두리번거린다
-			if (canSee)
-			{
-				Vector3 look = player.position - base.transform.position;
-				look.y = 0f;
-				if (look.sqrMagnitude > 0.01f)
-				{
-					base.transform.rotation = Quaternion.Slerp(base.transform.rotation,
-						Quaternion.LookRotation(look), Time.deltaTime * 6f);
-				}
-			}
-			else
-			{
-				base.transform.Rotate(Vector3.up, investigateTurnSpeed * 0.5f * Time.deltaTime);
-			}
-		}
-
-		interceptTimer -= Time.deltaTime;
-		if (interceptTimer <= 0f)
-		{
-			ChangeState(IsOutsideZone() ? State.Return : State.Patrol);
+			nextRouteFailureReport = Time.time + .5f;
+			MonsterDirector.Instance?.InvalidateRoute(this);
 		}
 	}
 
 	private void ProcessReturn(bool canSee)
 	{
-		if (canSee)
+		IsGuardingReturnEncounter = false;
+		if (canSee && HasCloseVisibleEncounter)
 		{
-			TryStartChase();
+			MonsterDirector.Instance?.ReportReturnEncounter(this);
+			if (currentState != State.Return) return;
+			// Keep the encounter dangerous without becoming a second follower in the same corridor.
+			IsGuardingReturnEncounter = true;
+			agent.isStopped = true;
+			agent.velocity = Vector3.zero;
+			Vector3 direction = player.position - transform.position; direction.y = 0;
+			if (direction.sqrMagnitude > .01f) transform.rotation = Quaternion.RotateTowards(
+				transform.rotation, Quaternion.LookRotation(direction), angularSpeed * Time.deltaTime);
 			return;
 		}
-		if (useGlobalNavMesh)
-		{
-			ChangeState(State.Patrol);
-			return;
-		}
+		if (canSee && TryStartChase()) { return; }
+		// A denied chase must still allow home arrival, including for the global patrol monster.
 		stateTimer += Time.deltaTime;
-		if (zoneCenter != null && (Vector3.Distance(base.transform.position, zoneCenter.position) < 5f || stateTimer > 15f))
+		if (zoneCenter != null && Vector3.Distance(transform.position, zoneCenter.position) < 3f)
 		{
 			ChangeState(State.Patrol);
+		}
+		else if (!agent.pathPending && (agent.pathStatus != NavMeshPathStatus.PathComplete || !agent.hasPath) && stateTimer > 1f)
+		{
+			stateTimer = 0f;
+			if (zoneCenter != null) { agent.SetDestination(zoneCenter.position); }
 		}
 	}
 
@@ -1298,7 +1355,14 @@ public class MonsterAI : MonoBehaviour
 		{
 			return;
 		}
+		PlaytestRecorder.Record("monster_state", name, transform.position, currentState + " -> " + newState);
 		currentState = newState;
+		if (newState != State.Intercept && newState != State.Prepare)
+		{
+			tacticalCorners = null;
+			tacticalHasVia = hasWaypoint = finalApproach = false;
+			agent.stoppingDistance = stoppingDistance;
+		}
 		if (newState != State.Investigate)
 		{
 			isRushing = false;
@@ -1309,6 +1373,7 @@ public class MonsterAI : MonoBehaviour
 		}
 		switch (newState)
 		{
+		case State.Prepare:
 		case State.Intercept:
 			agent.autoBraking = true;
 			UpdateInterceptDestination();
@@ -1374,11 +1439,12 @@ public class MonsterAI : MonoBehaviour
 		Vector3 vector = base.transform.position + Vector3.up * 1.5f;
 		Vector3 vector2 = player.position + Vector3.up * 1.5f;
 		Vector3 to = vector2 - vector;
-		// 바로 옆(2m 안)이면 방향·가림과 상관없이 보고 있는 것으로 친다.
+		// 바로 옆(2m 안)이면 방향과 상관없이 (벽 가림은 검사) 보고 있는 것으로 친다.
 		// 몸이 겹치면 각도 판정이 흔들려 "놓침"이 섞이고, 잡기 직전의 추격자가 끈질김을 소진해 포기했다(QA 2026-09-15)
 		if (to.magnitude <= TouchSightRange)
 		{
-			return true;
+			return !Physics.Linecast(vector, vector2, out var nearHit, obstacleMask, QueryTriggerInteraction.Ignore)
+				|| nearHit.transform == player || nearHit.transform.IsChildOf(player);
 		}
 		if (to.magnitude > sightRange)
 		{

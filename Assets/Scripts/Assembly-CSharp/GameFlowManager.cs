@@ -42,6 +42,7 @@ public class GameFlowManager : MonoBehaviour
 
 	[SerializeField]
 	private Transform playerStartPoint;
+	public Transform PlayerStartPoint => playerStartPoint;
 
 	[Header("4. Controllers")]
 	[SerializeField]
@@ -120,6 +121,7 @@ public class GameFlowManager : MonoBehaviour
 	private void Awake()
 	{
 		Instance = this;
+		if (GetComponent<PlaytestRecorder>() == null) { gameObject.AddComponent<PlaytestRecorder>(); }
 	}
 
 	private void Start()
@@ -181,6 +183,7 @@ public class GameFlowManager : MonoBehaviour
 
 	private void ResetToHomeState()
 	{
+		PlaytestRecorder.EndRound("restart");
 		isGameRunning = false;
 		Time.timeScale = 1f;
 
@@ -300,6 +303,7 @@ public class GameFlowManager : MonoBehaviour
 		StopAllCoroutines();
 		Time.timeScale = 1f;
 		isGameRunning = true;
+		PlaytestRecorder.BeginRound();
 	}
 
 	public void OnExitClicked()
@@ -415,6 +419,7 @@ public class GameFlowManager : MonoBehaviour
 			SoundManager.Instance.PlayInGameBGM();
 		}
 		isGameRunning = true;
+		PlaytestRecorder.BeginRound();
 
 		// 실제로 조작이 열리는 이 시점에 조준선을 켠다
 		if ((bool)crosshairUI)
@@ -436,6 +441,7 @@ public class GameFlowManager : MonoBehaviour
 	{
 		if (isGameRunning)
 		{
+			PlaytestRecorder.EndRound("game_over");
 			isGameRunning = false;
 			if (SoundManager.Instance != null)
 			{
@@ -468,6 +474,7 @@ public class GameFlowManager : MonoBehaviour
 	{
 		if (isGameRunning)
 		{
+			PlaytestRecorder.EndRound("escaped");
 			isGameRunning = false;
 			if (SoundManager.Instance != null)
 			{

@@ -42,3 +42,10 @@ crashlytics-build.properties
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local playtest traces (generated per round)
+/PlaytestRecordings/
+
+# Local analysis caches
+__pycache__/
+*.pyc

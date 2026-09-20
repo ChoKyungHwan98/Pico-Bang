@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -9,7 +8,7 @@ using UnityEngine;
 /// 듣는 쪽은 누가 소리를 냈는지 알 필요가 없다.
 ///
 /// 기획 의도: 플레이어의 진행 행동(사격)은 반드시 위험을 동반한다.
-/// 한 소리에 반응하는 몬스터는 들은 개체 중 가까운 <see cref="MaxResponders"/>마리까지 — 전부 몰려오면 줄줄이가 된다.
+/// 반응할 몬스터와 접근 경로는 Director가 함께 선택한다.
 /// </summary>
 public enum NoiseKind
 {
@@ -24,13 +23,8 @@ public static class NoiseSystem
 {
     public static bool DrawDebug = true;
 
-    /// <summary>소리 한 번에 확인하러 오는 최대 마릿수.</summary>
-    public const int MaxResponders = 2;
-
-    private static readonly List<KeyValuePair<float, MonsterAI>> hearers = new List<KeyValuePair<float, MonsterAI>>();
-
     /// <summary>
-    /// 소음을 발생시킨다. 들을 수 있는 몬스터 중 가까운 순서로 최대 <see cref="MaxResponders"/>마리가 반응한다.
+    /// 소음을 발생시킨다. 청각 확인 뒤 Director의 통합 경로 배정에 반영한다.
     /// </summary>
     /// <param name="position">소리가 난 지점 (플레이어 위치가 아닐 수 있음)</param>
     /// <param name="radius">이 소리의 기본 도달 반경</param>
@@ -38,21 +32,7 @@ public static class NoiseSystem
     {
         if (radius <= 0f) { return; }
 
-        hearers.Clear();
-        var monsters = MonsterAI.activeMonsters;
-        for (int i = monsters.Count - 1; i >= 0; i--)
-        {
-            MonsterAI m = monsters[i];
-            if (m != null && m.CanHearNoise(position, radius, out float distance))
-            {
-                hearers.Add(new KeyValuePair<float, MonsterAI>(distance, m));
-            }
-        }
-        hearers.Sort((a, b) => a.Key.CompareTo(b.Key));
-        for (int i = 0; i < hearers.Count && i < MaxResponders; i++)
-        {
-            hearers[i].Value.OnHearNoise(position, radius, kind);
-        }
+        MonsterDirector.Instance?.ReportNoise(position, radius, kind);
 
         if (DrawDebug)
         {

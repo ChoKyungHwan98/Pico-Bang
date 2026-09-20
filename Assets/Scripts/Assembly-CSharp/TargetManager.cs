@@ -53,7 +53,7 @@ public class TargetManager : MonoBehaviour
 	[SerializeField]
 	private int gridDivisions = 3;
 
-	[Tooltip("벽 과녁이 붙는 높이 범위(바닥 기준, m) — 눈높이 근처")]
+	[HideInInspector] // Legacy serialized range. Height rhythm bands below replace it.
 	[SerializeField]
 	private Vector2 wallHeightRange = new Vector2(1f, 2.3f);
 
@@ -87,17 +87,20 @@ public class TargetManager : MonoBehaviour
 	[SerializeField]
 	private GameObject portalObject;
 
-	// 기획 결정(2026-09-11): 포탈은 무작위 구역(A~D)에 열린다. 단, 걸어서 닿을 수 있는 곳만.
-	[Tooltip("구역 중심에서 이 반경 안에서 포탈 자리를 찾는다(m)")]
-	[SerializeField]
-	private float portalSearchRadius = 25f;
+	private ProceduralExitPortal exitPortal;
+	private Coroutine portalNoticeRoutine;
+	public Vector3 PortalPosition => exitPortal != null ? exitPortal.transform.position : Vector3.zero;
+	public int TargetGoal => targetGoal;
+	public bool PortalOpened => portalOpened;
+	public int SpawnedTargetCount => spawnedTargets.Count;
 
-	[Tooltip("포탈 둘레로 이만큼은 평평하고 트여 있어야 한다(m). 작은 발판·벽 틈을 막는다")]
-	[SerializeField]
-	private float portalClearRadius = 3f;
-
-	private Vector3 portalHomePosition;
-	private bool portalHomeSaved;
+	[Header("Wall target rhythm (floor-relative metres)")]
+	[SerializeField] private Vector2 lowTargetHeight = new Vector2(1.1f, 1.65f);
+	[SerializeField] private Vector2 normalTargetHeight = new Vector2(2.1f, 2.8f);
+	[SerializeField] private Vector2 highTargetHeight = new Vector2(3.4f, 4.2f);
+	private NavMeshPath reachablePath;
+	private Vector3 spawnStart;
+	private bool spawnStartReady;
 
 	// 걸을 수 있는 영역의 범위. 칸 나누기에 쓴다
 	private Bounds walkableBounds;
@@ -127,6 +130,7 @@ public class TargetManager : MonoBehaviour
 	private void Awake()
 	{
 		Instance = this;
+		reachablePath = new NavMeshPath();
 	}
 
 	private void Start()
@@ -140,6 +144,11 @@ public class TargetManager : MonoBehaviour
 		destroyedCount = 0;
 		isGameActive = true;
 		portalOpened = false;
+		if (portalNoticeRoutine != null)
+		{
+			StopCoroutine(portalNoticeRoutine);
+			portalNoticeRoutine = null;
+		}
 		ClearAllTargets();
 		if (portalNoticeText != null)
 		{
@@ -149,6 +158,7 @@ public class TargetManager : MonoBehaviour
 		{
 			portalObject.SetActive(value: false);
 		}
+		EnsureExitPortal();
 		UpdateUI();
 		SpawnTargets(totalTargetsToSpawn);
 	}
@@ -159,6 +169,7 @@ public class TargetManager : MonoBehaviour
 		{
 			if (spawnedTarget != null)
 			{
+				spawnedTarget.SetActive(false);
 				Object.Destroy(spawnedTarget);
 			}
 		}
@@ -222,19 +233,16 @@ public class TargetManager : MonoBehaviour
 		}
 		if (countText != null)
 		{
-			countText.text = $"Target: {destroyedCount}";
+			countText.text = portalOpened ? "EXIT: RETURN TO START" : $"Target: {destroyedCount} / {targetGoal}";
 		}
 	}
 
 	private void OpenPortal()
 	{
 		portalOpened = true;
-		if (portalObject != null)
-		{
-			PlacePortalInRandomZone();
-			portalObject.SetActive(value: true);
-		}
-		StartCoroutine(ShowPortalNotice());
+		EnsureExitPortal();
+		PlaytestRecorder.Record("portal_open", "exit", PortalPosition, "return_to_start");
+		portalNoticeRoutine = StartCoroutine(ShowPortalNotice());
 	}
 
 	private IEnumerator ShowPortalNotice()
@@ -242,10 +250,11 @@ public class TargetManager : MonoBehaviour
 		if (portalNoticeText != null)
 		{
 			portalNoticeText.gameObject.SetActive(value: true);
-			portalNoticeText.text = "Portal Created!";
+			portalNoticeText.text = "중앙에 포탈이 생성되었습니다";
 			yield return new WaitForSeconds(5f);
 			portalNoticeText.gameObject.SetActive(value: false);
 		}
+		portalNoticeRoutine = null;
 	}
 
 	/// <summary>
@@ -254,10 +263,10 @@ public class TargetManager : MonoBehaviour
 	/// </summary>
 	private void SpawnTargets(int count)
 	{
-		if (spawnAreas == null || spawnAreas.Length == 0)
-		{
-			return;
-		}
+		if (targetPrefab == null) { Debug.LogError("[TargetManager] Target prefab is missing."); return; }
+		var start = GameFlowManager.Instance != null ? GameFlowManager.Instance.PlayerStartPoint : null;
+		spawnStartReady = start != null && NavMesh.SamplePosition(start.position, out _, 3f, NavMesh.AllAreas);
+		if (spawnStartReady) { NavMesh.SamplePosition(start.position, out var hit, 3f, NavMesh.AllAreas); spawnStart = hit.position; }
 		int floating = Mathf.RoundToInt(count * floatingRatio);
 		SpawnFloatingTargets(floating);
 		SpawnWallTargets(count - floating);
@@ -293,6 +302,14 @@ public class TargetManager : MonoBehaviour
 			}
 		}
 
+		// Empty edge cells must not reduce the playable supply: spread their missing quota over valid cells.
+		for (int pass = 0; pass < 3 && shortfall > 0; pass++)
+		{
+			for (int cell = 0; cell < cells && shortfall > 0; cell++)
+			{
+				shortfall -= SpawnWallTargetsInCell(cell / n, cell % n, n, Mathf.Min(2, shortfall));
+			}
+		}
 		if (shortfall > 0)
 		{
 			Debug.LogWarning($"[TargetManager] 벽 과녁 {shortfall}개를 놓을 자리를 찾지 못했습니다 (목표 {count}개).");
@@ -320,17 +337,30 @@ public class TargetManager : MonoBehaviour
 			if (floor.position.x < min.x + cx * cellW || floor.position.x > min.x + (cx + 1) * cellW) { continue; }
 			if (floor.position.z < min.z + cz * cellD || floor.position.z > min.z + (cz + 1) * cellD) { continue; }
 
-			Vector3 origin = floor.position + Vector3.up * Random.Range(wallHeightRange.x, wallHeightRange.y);
+			// Deliberate 20/60/20 rhythm instead of small, visually indistinguishable eye-height jitter.
+			int slot = spawnedTargets.Count % 10;
+			Vector2 band = slot == 0 || slot == 5 ? lowTargetHeight : slot == 3 || slot == 8 ? highTargetHeight : normalTargetHeight;
+			if (attempts > want * 60) { band = normalTargetHeight; } // Short walls must not make the goal impossible.
+			Vector3 origin = floor.position + Vector3.up * Random.Range(band.x, band.y);
 			Vector3 dir = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f) * Vector3.forward;
 			if (!Physics.Raycast(origin, dir, out RaycastHit wall, wallSearchDistance, ~0, QueryTriggerInteraction.Ignore)) { continue; }
 			// 몸이 있는 것(플레이어·몬스터)이나 다른 과녁에는 붙이지 않는다
-			if (wall.collider.attachedRigidbody != null || wall.collider.GetComponent<Target>() != null) { continue; }
+			if (wall.collider.attachedRigidbody != null || wall.collider.GetComponentInParent<Target>() != null) { continue; }
 			if (Mathf.Abs(Vector3.Dot(wall.normal, Vector3.up)) >= 0.3f) { continue; }
 
 			Vector3 position = wall.point + wall.normal * 0.1f;
 			if (!IsFarFromOthers(position)) { continue; }
+			Vector3 eye = floor.position + Vector3.up * 1.5f;
+			Vector3 aim = position - eye;
+			float horizontal = new Vector2(aim.x, aim.z).magnitude;
+			if (horizontal < 3f || Mathf.Abs(Mathf.Atan2(aim.y, horizontal) * Mathf.Rad2Deg) > 35f) { continue; }
+			if (Physics.Raycast(eye, aim.normalized, out var obstruction, aim.magnitude - .12f, ~0, QueryTriggerInteraction.Ignore)) { continue; }
+			if (!HasWallBacking(wall, .78f)) { continue; }
+			if (spawnStartReady && (!NavMesh.CalculatePath(spawnStart, floor.position, NavMesh.AllAreas, reachablePath) || reachablePath.status != NavMeshPathStatus.PathComplete)) { continue; }
 
 			GameObject item = Object.Instantiate(targetPrefab, position, Quaternion.LookRotation(wall.normal));
+			var target = item.GetComponent<Target>();
+			if (target != null) { target.SetPlacement(position.y - floor.position.y, floor.position); }
 			spawnedTargets.Add(item);
 			placed++;
 		}
@@ -350,96 +380,29 @@ public class TargetManager : MonoBehaviour
 		return true;
 	}
 
-	/// <summary>
-	/// 포탈을 무작위 구역(A~D) 안의, 걸어서 닿을 수 있는 자리로 옮긴다.
-	/// 구역을 무작위 순서로 돌며 조건에 맞는 자리를 찾고, 어디서도 못 찾으면 원래 자리에 둔다.
-	/// </summary>
-	private void PlacePortalInRandomZone()
+	private void EnsureExitPortal()
 	{
-		Transform portal = portalObject.transform;
-		if (!portalHomeSaved)
-		{
-			portalHomePosition = portal.position;
-			portalHomeSaved = true;
-		}
-
-		List<Vector3> zoneCenters = new List<Vector3>();
-		foreach (MonsterAI m in MonsterAI.activeMonsters)
-		{
-			if (m != null && m.role == MonsterAI.MonsterRole.Zone_Defender && m.zoneCenter != null)
-			{
-				zoneCenters.Add(m.zoneCenter.position);
-			}
-		}
-		// 무작위 순서
-		for (int i = zoneCenters.Count - 1; i > 0; i--)
-		{
-			int j = Random.Range(0, i + 1);
-			Vector3 tmp = zoneCenters[i]; zoneCenters[i] = zoneCenters[j]; zoneCenters[j] = tmp;
-		}
-
-		GameObject start = GameObject.Find("PlayerStartPos");
-		Vector3 startPos = (start != null) ? start.transform.position : portalHomePosition;
-		if (!NavMesh.SamplePosition(startPos, out NavMeshHit startHit, 3f, NavMesh.AllAreas))
-		{
-			portal.position = portalHomePosition;
-			return;
-		}
-
-		foreach (Vector3 center in zoneCenters)
-		{
-			for (int attempt = 0; attempt < 60; attempt++)
-			{
-				Vector2 offset = Random.insideUnitCircle * portalSearchRadius;
-				if (TryPortalSpot(center + new Vector3(offset.x, 0f, offset.y), startHit.position, out Vector3 spot))
-				{
-					portal.position = spot;
-					portal.rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
-					return;
-				}
-			}
-		}
-
-		Debug.LogWarning("[TargetManager] 포탈을 놓을 구역 자리를 찾지 못해 원래 위치에 엽니다.");
-		portal.position = portalHomePosition;
+		if (portalObject != null) { portalObject.SetActive(false); }
+		Transform start = GameFlowManager.Instance != null ? GameFlowManager.Instance.PlayerStartPoint : null;
+		if (start == null) { start = GameObject.Find("PlayerStartPos")?.transform; }
+		if (start == null) { Debug.LogError("[TargetManager] Player start is required for the fixed exit."); return; }
+		Vector3 position = start.position;
+		// Keep the exact start X/Z; only settle the visual base onto its floor.
+		if (Physics.Raycast(position + Vector3.up * .4f, Vector3.down, out var ground, 2f, ~0, QueryTriggerInteraction.Ignore)
+			&& ground.collider.attachedRigidbody == null) { position.y = ground.point.y; }
+		if (exitPortal == null) { exitPortal = ProceduralExitPortal.Create(position, Quaternion.Euler(0, start.eulerAngles.y, 0)); }
+		else { exitPortal.transform.SetPositionAndRotation(position, Quaternion.Euler(0, start.eulerAngles.y, 0)); }
+		exitPortal.SetUnlocked(portalOpened);
 	}
 
-	/// <summary>
-	/// 포탈 자리 조건:
-	///   1) 걸을 수 있는 바닥
-	///   2) 둘레 portalClearRadius가 같은 높이로 평평하게 트여 있음 — 작은 발판·벽 틈 제외
-	///   3) 시작 지점에서 점프 없이 걸어서 닿는 경로가 있음 — 점프로만 닿는 높은 곳 제외
-	///
-	/// "시작 지점과 높이가 비슷해야 한다"는 조건은 두지 않는다. 이 맵은 구역 바닥 자체가 시작 지점보다
-	/// 1~2m 높은 넓은 비탈이라, 그 조건을 걸면 구역 A·C에서 자리를 하나도 못 찾았다(시험 결과 60개 중 0개).
-	/// 작은 발판은 2), 점프로만 가는 곳은 3)이 이미 걸러낸다.
-	/// </summary>
-	private bool TryPortalSpot(Vector3 candidate, Vector3 startOnNav, out Vector3 spot)
+	private bool HasWallBacking(RaycastHit wall, float radius)
 	{
-		spot = Vector3.zero;
-		if (!NavMesh.SamplePosition(candidate, out NavMeshHit hit, 3f, NavMesh.AllAreas)) { return false; }
-
-		for (int i = 0; i < 8; i++)
+		Vector3 right = Vector3.Cross(Vector3.up, wall.normal).normalized;
+		Vector3[] offsets = { Vector3.zero, Vector3.up * radius, Vector3.down * radius, right * radius, -right * radius };
+		foreach (var offset in offsets)
 		{
-			Vector3 dir = Quaternion.Euler(0f, 45f * i, 0f) * Vector3.forward;
-			Vector3 around = hit.position + dir * portalClearRadius;
-			// 가는 길에 바닥 가장자리(벽·낭떠러지)가 있으면 트인 곳이 아니다
-			if (NavMesh.Raycast(hit.position, around, out NavMeshHit _, NavMesh.AllAreas)) { return false; }
-			if (!NavMesh.SamplePosition(around, out NavMeshHit aroundHit, 0.5f, NavMesh.AllAreas)) { return false; }
-			if (Mathf.Abs(aroundHit.position.y - hit.position.y) > 0.3f) { return false; }
-		}
-
-		// 점프 링크(Jump 영역)를 빼고 걸어서만 닿는지 본다
-		int walkOnly = NavMesh.AllAreas & ~(1 << NavMesh.GetAreaFromName("Jump"));
-		NavMeshPath path = new NavMeshPath();
-		if (!NavMesh.CalculatePath(startOnNav, hit.position, walkOnly, path) || path.status != NavMeshPathStatus.PathComplete) { return false; }
-
-		// NavMesh 표면은 바닥보다 살짝 떠 있으므로 실제 바닥 높이에 맞춘다
-		spot = hit.position;
-		if (Physics.Raycast(hit.position + Vector3.up, Vector3.down, out RaycastHit ground, 3f, ~0, QueryTriggerInteraction.Ignore)
-			&& ground.collider.attachedRigidbody == null)
-		{
-			spot.y = ground.point.y;
+			if (!Physics.Raycast(wall.point + offset + wall.normal * .25f, -wall.normal, out var hit, .6f, ~0, QueryTriggerInteraction.Ignore)
+				|| hit.collider != wall.collider || Vector3.Dot(hit.normal, wall.normal) < .9f) { return false; }
 		}
 		return true;
 	}
@@ -450,7 +413,7 @@ public class TargetManager : MonoBehaviour
 	/// </summary>
 	private void SpawnFloatingTargets(int count)
 	{
-		if (count <= 0) { return; }
+		if (count <= 0 || spawnAreas == null || spawnAreas.Length == 0) { return; }
 		GameObject template = GetFloatingTemplate();
 		if (template == null) { return; }
 
@@ -487,7 +450,7 @@ public class TargetManager : MonoBehaviour
 		float min = minSpacing * minSpacing;
 		foreach (GameObject t in spawnedTargets)
 		{
-			if (t != null && (t.transform.position - position).sqrMagnitude < min) { return false; }
+			if (t != null && new Vector2(t.transform.position.x-position.x, t.transform.position.z-position.z).sqrMagnitude < min) { return false; }
 		}
 		return true;
 	}

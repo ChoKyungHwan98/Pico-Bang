@@ -93,6 +93,7 @@ public class PlayerHealth : MonoBehaviour
 			currentHealth -= Mathf.Max(1, hearts);
 			if (currentHealth < 0) { currentHealth = 0; }
 			UpdateHeartUI();
+			PlaytestRecorder.Record("player_hit", "player", transform.position, "health=" + currentHealth, attackerPos);
 			Debug.Log($"플레이어 피격! 남은 체력: {currentHealth}");
 			if (currentHealth <= 0)
 			{
