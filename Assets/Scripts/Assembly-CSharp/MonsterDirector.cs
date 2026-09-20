@@ -39,6 +39,17 @@ public class MonsterDirector : MonoBehaviour
     }
 
     /// <summary>차단 후보 한 길. AI 테스트 씬에 그대로 그린다.</summary>
+    /// <summary>한 몬스터에게 배정된 "플레이어까지 가는 길". 목적지는 언제나 플레이어, 다른 것은 경로뿐이다.</summary>
+    public class RouteInfo
+    {
+        public Vector3[] corners;      // 전체 경로(경유지가 있으면 두 구간을 이어 붙인 것)
+        public bool detour;            // 경유지를 거치는가
+        public Vector3 waypoint;
+        public float overlap;          // 확정된 다른 경로들과의 최대 겹침률(수렴 구간 제외)
+        public bool directChaser;      // 감독이 경로를 주지 않는 직행 추격자
+        public int colorIndex;
+    }
+
     public struct CutCandidate
     {
         public Vector3 point;       // 그 방향으로 바닥을 따라 가다 막히는 곳
@@ -73,6 +84,9 @@ public class MonsterDirector : MonoBehaviour
     private readonly Dictionary<MonsterAI, Vector3> blurOffsets = new Dictionary<MonsterAI, Vector3>();
     private readonly Dictionary<MonsterAI, float> blurRefreshAt = new Dictionary<MonsterAI, float>();
     private readonly List<MonsterAI> chasers = new List<MonsterAI>();
+    private readonly Dictionary<MonsterAI, RouteInfo> routes = new Dictionary<MonsterAI, RouteInfo>();
+    private int routeColorSeq;
+    private string routeSummary = "";
     private readonly List<CutCandidate> lastCandidates = new List<CutCandidate>();
     private Vector3 candidateOrigin;
     private NavMeshPath pathBuffer;
@@ -132,6 +146,17 @@ public class MonsterDirector : MonoBehaviour
     public IReadOnlyDictionary<MonsterAI, Vector3> DebugWaypoints => cutWaypoints;
     public IReadOnlyList<CutCandidate> DebugCutCandidates => lastCandidates;
     public Vector3 DebugCandidateOrigin => candidateOrigin;
+    public IReadOnlyDictionary<MonsterAI, RouteInfo> DebugRoutes => routes;
+    public float DebugConvergenceRadius => ConvergenceRadius;
+
+    /// <summary>테스트 화면용 한 줄 요약: 직행/우회 · 겹침 · 최종 접근 여부.</summary>
+    public string DebugRouteLabel(MonsterAI m)
+    {
+        if (m == null || !routes.TryGetValue(m, out RouteInfo r)) { return ""; }
+        string kind = r.directChaser ? "직행(추격)" : (r.detour ? "우회" : "직행");
+        string fin = (m.IsFinalApproach ? " ▶최종" : "");
+        return kind + " ov" + r.overlap.ToString("F2") + fin;
+    }
     public int DebugFollowBreaks => followBreaks;
     public bool IsScattering => Time.time < scatterUntil;
     public float ScatterRemaining => Mathf.Max(0f, scatterUntil - Time.time);
@@ -325,7 +350,7 @@ public class MonsterDirector : MonoBehaviour
         if (now >= nextLayoutTime)
         {
             nextLayoutTime = now + LayoutRefresh;
-            LayoutTeam();
+            LayoutTeamByRoute();
         }
     }
 
@@ -784,13 +809,14 @@ public class MonsterDirector : MonoBehaviour
     private void MakeCutter(MonsterAI m, string reason)
     {
         if (!team.Contains(m)) { AddToTeam(m, reason); }
-        Vector3 point = StopShortPoint(m);
-        m.CommandAmbush(point);
-        cutPoints[m] = point;
+        // 강등이 아니다(기획 2026-09-20). 계속 플레이어를 쫓되, 어느 길로 갈지는 다음 배정에서 정한다.
+        // 예전처럼 플레이어에게서 떨어진 지점으로 보내지 않는다.
+        m.CommandPursue(Vector3.zero, false);
         cutWaypoints.Remove(m);
+        cutPoints[m] = playerPos;
         RefreshChasers();
         nextLayoutTime = 0f;
-        Log($"<color=magenta><b>[차단 전환]</b></color> {m.name} — {reason}");
+        Log($"<color=magenta><b>[우회 전환]</b></color> {m.name} — {reason}");
     }
 
     // ────────────────────────────────────────────────
@@ -986,6 +1012,153 @@ public class MonsterDirector : MonoBehaviour
 
         layoutSummary = $"팀 {team.Count} (추격 {chasers.Count}) · 후보 {valid}길 · 막기 {assigned}(빙 돌아 {detours}) / 자기 쪽 접근 {approach}"
             + (relaxed > 0 ? $" · 방향 겹침 허용 {relaxed}" : "") + (unreachable > 0 ? $" · 못 가는 조합 {unreachable}" : "");
+    }
+
+    // ────────────────────────────────────────────────
+    //  경로 배정 (기획 2026-09-20) — 방위각이 아니라 NavMesh 경로 겹침으로 나눈다
+    // ────────────────────────────────────────────────
+
+    /// <summary>
+    /// ① 팀 전원의 플레이어까지 경로를 짜고 ② 겹침을 비교해 ③ 겹치는 개체에게 경유지를 물려 다른 길을 주고
+    /// ④ 목적지는 언제나 플레이어로 둔다. 도착해서 기다리는 개체는 더 이상 없다.
+    ///
+    /// 확정은 <b>경로가 짧은 순</b>. 가장 가까운 개체가 직행을 갖고 나머지가 비킨다 — 강등이 아니라 순서다.
+    /// 최종 접근에 들어간 개체는 경로를 갈아엎지 않는다(매초 재배치가 마무리를 엎지 않도록).
+    /// </summary>
+    private void LayoutTeamByRoute()
+    {
+        RefreshChasers();
+
+        List<MonsterAI> pending = new List<MonsterAI>();
+        List<Vector3[]> accepted = new List<Vector3[]>();
+        int locked = 0, directs = 0, detours = 0, failed = 0;
+
+        // 팀에서 빠진 개체의 기록은 버린다
+        foreach (MonsterAI m in new List<MonsterAI>(routes.Keys))
+        {
+            if (m == null || !team.Contains(m)) { routes.Remove(m); }
+        }
+
+        foreach (MonsterAI m in team)
+        {
+            if (m == null || m.IsInStun || m.IsGivingUp) { continue; }
+
+            // 직행 추격자: 감독이 길을 주지 않는다. 다만 남이 피해 가도록 그 길을 등록해 둔다
+            if (m.CurrentState == MonsterAI.State.Chase)
+            {
+                if (BuildRoute(m.transform.position, playerPos, out Vector3[] cr, out float _))
+                {
+                    accepted.Add(cr);
+                    RouteInfo ri = Hold(m);
+                    ri.corners = cr; ri.detour = false; ri.waypoint = Vector3.zero;
+                    ri.overlap = 0f; ri.directChaser = true;
+                }
+                directs++;
+                continue;
+            }
+
+            // 최종 접근 중: 건드리지 않되 자리는 잡아 둔다
+            if (m.IsRouteLocked)
+            {
+                if (routes.TryGetValue(m, out RouteInfo held) && held.corners != null) { accepted.Add(held.corners); }
+                locked++;
+                continue;
+            }
+
+            pending.Add(m);
+        }
+
+        pending.Sort((a, b) => RouteLengthToPlayer(a).CompareTo(RouteLengthToPlayer(b)));
+
+        foreach (MonsterAI m in pending)
+        {
+            if (!BuildRoute(m.transform.position, playerPos, out Vector3[] straight, out float straightLen))
+            {
+                failed++;
+                m.CommandPursue(Vector3.zero, false);   // 길을 못 짜도 멈추지 않는다
+                continue;
+            }
+
+            float ov = MaxOverlapExcl(straight, accepted);
+            Vector3[] chosen = straight;
+            Vector3 wp = Vector3.zero;
+            bool via = false;
+
+            if (ov > OverlapThreshold && accepted.Count > 0
+                && TryFindDetour(m, accepted, out Vector3[] alt, out Vector3 altWp, out float altOv)
+                && altOv < ov)
+            {
+                chosen = alt; wp = altWp; via = true; ov = altOv;
+            }
+
+            accepted.Add(chosen);
+            RouteInfo info = Hold(m);
+            info.corners = chosen; info.detour = via; info.waypoint = wp;
+            info.overlap = ov; info.directChaser = false;
+
+            m.CommandPursue(wp, via);
+            if (via) { detours++; } else { directs++; }
+
+            // 옛 디버그 표시 유지
+            cutWaypoints.Remove(m);
+            if (via) { cutWaypoints[m] = wp; }
+            cutPoints[m] = playerPos;
+        }
+
+        routeSummary = $"팀 {team.Count} · 직행 {directs} / 우회 {detours}"
+            + (locked > 0 ? $" · 최종접근 {locked}" : "")
+            + (failed > 0 ? $" · 길없음 {failed}" : "");
+        layoutSummary = routeSummary;
+    }
+
+    private RouteInfo Hold(MonsterAI m)
+    {
+        if (!routes.TryGetValue(m, out RouteInfo r) || r == null)
+        {
+            r = new RouteInfo { colorIndex = routeColorSeq++ };
+            routes[m] = r;
+        }
+        return r;
+    }
+
+    /// <summary>
+    /// 플레이어 주변 경유지 후보로 대체 경로를 찾는다(기획 2026-09-20 a안).
+    /// <b>겹침은 몬스터 → 경유지 → 플레이어 전체 경로로 잰다</b> — 뒤쪽만 갈라져도 앞 통로를 공유하면 좋은 우회가 아니다.
+    /// 기존 규칙은 그대로 둔다: 플레이어를 뚫고 경유지로 가지 않으며, 우회 시간 상한을 넘기지 않고, 가던 경유지를 우대한다.
+    /// </summary>
+    private bool TryFindDetour(MonsterAI m, List<Vector3[]> accepted, out Vector3[] best, out Vector3 bestWaypoint, out float bestOverlap)
+    {
+        best = null;
+        bestWaypoint = Vector3.zero;
+        bestOverlap = 1f;
+        float speed = Mathf.Max(1f, FarSpeed);
+        float bestCost = float.MaxValue;
+        bool hadPrev = routes.TryGetValue(m, out RouteInfo prev) && prev != null && prev.detour;
+
+        for (int k = 0; k < 8; k++)
+        {
+            Vector3 w = ClampAlongNav(candidateOrigin,
+                candidateOrigin + Quaternion.Euler(0f, 45f * k, 0f) * Vector3.forward * WaypointDistance);
+            if (HorizontalDistance(w, candidateOrigin) < WaypointDistance * 0.6f) { continue; }
+
+            if (!BuildRoute(m.transform.position, w, out Vector3[] leg1, out float l1)) { continue; }
+            if (PassesNear(leg1, candidateOrigin, CrossingRadius)) { continue; }        // 플레이어 관통 방지(유지)
+            if (!BuildRoute(w, playerPos, out Vector3[] leg2, out float l2)) { continue; }
+
+            float travel = (l1 + l2) / speed;
+            if (travel > DetourTimeLimit) { continue; }                                  // 우회 시간 상한(유지)
+
+            Vector3[] full = ConcatRoute(leg1, leg2);
+            float ov = MaxOverlapExcl(full, accepted);
+
+            bool keeping = hadPrev && HorizontalDistance(prev.waypoint, w) < WaypointDistance * 0.35f;
+            float cost = (l1 + l2) * LengthWeight + ov * OverlapPenalty - (keeping ? KeepBonus : 0f);
+            if (cost < bestCost)
+            {
+                bestCost = cost; best = full; bestWaypoint = w; bestOverlap = ov;
+            }
+        }
+        return best != null;
     }
 
     /// <summary>
@@ -1226,6 +1399,55 @@ public class MonsterDirector : MonoBehaviour
         return false;
     }
 
+    /// <summary>확정된 길들 중 가장 많이 겹치는 비율.</summary>
+    private float MaxOverlapExcl(Vector3[] route, List<Vector3[]> others)
+    {
+        float max = 0f;
+        foreach (Vector3[] o in others) { max = Mathf.Max(max, OverlapExcl(route, o)); }
+        return max;
+    }
+
+    /// <summary>
+    /// route를 2m 간격으로 짚어 다른 길 가까이에 드는 비율(0~1).
+    /// <b>플레이어 근처 수렴 구간은 세지 않는다</b> — 모든 길이 플레이어에서 만나므로,
+    /// 빼지 않으면 지워지지 않는 바닥값이 생겨 포위가 완성될수록 규칙이 판을 엎는다(기획 2026-09-20).
+    /// </summary>
+    private float OverlapExcl(Vector3[] route, Vector3[] other)
+    {
+        if (route == null || other == null || route.Length < 2 || other.Length < 2) { return 0f; }
+        float excl = ConvergenceRadius;
+        float near = RouteNearDistance;
+        int total = 0, hit = 0;
+        for (int i = 1; i < route.Length; i++)
+        {
+            float len = HorizontalDistance(route[i - 1], route[i]);
+            int steps = Mathf.Max(1, Mathf.CeilToInt(len / OverlapSampleStep));
+            for (int k = 0; k < steps; k++)
+            {
+                Vector3 q = Vector3.Lerp(route[i - 1], route[i], (float)k / steps);
+                if (HorizontalDistance(q, playerPos) < excl) { continue; }
+                total++;
+                if (DistanceToPolyline(q, other) < near) { hit++; }
+            }
+        }
+        return total > 0 ? (float)hit / total : 0f;
+    }
+
+    /// <summary>두 구간을 한 경로로 잇는다 — 겹침은 반드시 전체 경로로 재야 한다.</summary>
+    private static Vector3[] ConcatRoute(Vector3[] a, Vector3[] b)
+    {
+        if (a == null || a.Length == 0) { return b; }
+        if (b == null || b.Length == 0) { return a; }
+        List<Vector3> all = new List<Vector3>(a.Length + b.Length);
+        all.AddRange(a);
+        for (int i = 0; i < b.Length; i++)
+        {
+            if (i == 0 && all.Count > 0 && HorizontalDistance(all[all.Count - 1], b[i]) < 0.05f) { continue; }
+            all.Add(b[i]);
+        }
+        return all.ToArray();
+    }
+
     private static float MaxOverlap(Vector3[] route, List<Vector3[]> others)
     {
         float max = 0f;
@@ -1319,6 +1541,9 @@ public class MonsterDirector : MonoBehaviour
     private float TeleportUnseenTime { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0.5f, g.teleportUnseenTime) : 3f; } }
     private float TeleportMinDistance { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(10f, g.teleportMinDistance) : 40f; } }
     private float PlayerViewAngle { get { MonsterAI g = FindGlobal(); return g != null ? g.playerViewAngle : 90f; } }
+    private float OverlapThreshold { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Clamp01(g.routeOverlapThreshold) : 0.45f; } }
+    private float RouteNearDistance { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0.5f, g.routeNearDistance) : 3f; } }
+    private float ConvergenceRadius { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0f, g.convergenceExcludeRadius) : 8f; } }
 
     /// <summary>못 본 채 추적할 때의 속도 상한(기획 A안). 가까울 때 속도와 같다.</summary>
     public float TrackingSpeedCap => NearSpeed;
@@ -1329,14 +1554,66 @@ public class MonsterDirector : MonoBehaviour
     public float PersistenceMin { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0.2f, g.persistenceMin) : 2f; } }
     public float GiveUpLookTime { get { MonsterAI g = FindGlobal(); return g != null ? Mathf.Max(0f, g.giveUpLookTime) : 2f; } }
 
+    private static readonly Color[] RouteColors =
+    {
+        new Color(0.30f, 0.85f, 1.00f),   // 하늘
+        new Color(1.00f, 0.80f, 0.20f),   // 노랑
+        new Color(0.50f, 1.00f, 0.45f),   // 연두
+        new Color(1.00f, 0.45f, 0.85f),   // 분홍
+        new Color(1.00f, 0.55f, 0.25f),   // 주황
+        new Color(0.70f, 0.60f, 1.00f),   // 보라
+    };
+
     private void OnDrawGizmos()
     {
-        if (hunting)
+        if (!hunting) { return; }
+
+        Vector3 up = Vector3.up * 0.6f;
+
+        // 겹침 판정에서 빼는 수렴 구간 — 이 안은 모든 길이 만나므로 세지 않는다
+        float excl = ConvergenceRadius;
+        if (excl > 0.1f)
         {
-            Gizmos.color = Color.red;
-            Gizmos.DrawWireSphere(candidateOrigin, 1.5f);
+            Gizmos.color = new Color(1f, 0.35f, 0.25f, 0.5f);
+            DrawGizmoCircle(playerPos + up, excl);
         }
-        Gizmos.color = Color.magenta;
-        foreach (KeyValuePair<MonsterAI, Vector3> pair in cutPoints) { Gizmos.DrawWireSphere(pair.Value, 1f); }
+        Gizmos.color = Color.red;
+        Gizmos.DrawWireSphere(candidateOrigin, 1f);
+
+        foreach (KeyValuePair<MonsterAI, RouteInfo> pair in routes)
+        {
+            RouteInfo r = pair.Value;
+            if (pair.Key == null || r == null || r.corners == null || r.corners.Length < 2) { continue; }
+            Color c = RouteColors[Mathf.Abs(r.colorIndex) % RouteColors.Length];
+            // 직행 추격자는 흐리게 — 감독이 준 길이 아니라 참고용이다
+            Gizmos.color = r.directChaser ? new Color(c.r, c.g, c.b, 0.35f) : c;
+            for (int i = 1; i < r.corners.Length; i++)
+            {
+                Gizmos.DrawLine(r.corners[i - 1] + up, r.corners[i] + up);
+            }
+            Gizmos.DrawWireSphere(r.corners[0] + up, 0.5f);
+            if (r.detour)
+            {
+                Gizmos.DrawWireSphere(r.waypoint + up, 1.5f);
+                Gizmos.DrawLine(r.waypoint, r.waypoint + Vector3.up * 3f);
+            }
+            if (pair.Key.IsFinalApproach)
+            {
+                Gizmos.DrawWireSphere(pair.Key.transform.position + Vector3.up * 2.5f, 0.8f);
+            }
+        }
+    }
+
+    private static void DrawGizmoCircle(Vector3 center, float radius)
+    {
+        const int seg = 32;
+        Vector3 prev = center + new Vector3(radius, 0f, 0f);
+        for (int i = 1; i <= seg; i++)
+        {
+            float a = i / (float)seg * Mathf.PI * 2f;
+            Vector3 next = center + new Vector3(Mathf.Cos(a) * radius, 0f, Mathf.Sin(a) * radius);
+            Gizmos.DrawLine(prev, next);
+            prev = next;
+        }
     }
 }

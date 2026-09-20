@@ -147,6 +147,13 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("굳은 뒤 자세를 되찾는 데 걸리는 시간")]
 	public float stunRecoverTime = 1.5f;
 
+	[Tooltip("굳어 있는 동안 플레이어가 몸을 통과할 수 있게 한다. 좌클릭으로 만든 틈으로 빠져나가기 위함")]
+	public bool stunLetPlayerPass = true;
+
+	[Tooltip("스턴이 끝났는데 플레이어와 몸이 겹쳐 있으면 충돌 복구를 이 시간까지 미룬다(초). " +
+		"겹친 채 복구하면 서로 튕겨나가거나 벽 밖으로 밀린다")]
+	public float stunRestoreMaxDelay = 3f;
+
 	[Tooltip("전기 아크 연출을 켤지 여부")]
 	public bool showStunSparks = true;
 
@@ -167,6 +174,17 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("팀 밖 몬스터가 가장 먼 차단 팀원보다 이 비율만큼 가까우면 교대(0~1). 도망친 쪽 구역 몬스터가 앞길로 올라온다")]
 	[Range(0.1f, 1f)]
 	public float teamSwapRatio = 0.6f;
+
+	[Tooltip("경로 겹침이 이 비율을 넘으면 대체 경로(경유지)를 찾는다. 0=늘 우회, 1=절대 우회 안 함")]
+	[Range(0f, 1f)]
+	public float routeOverlapThreshold = 0.45f;
+
+	[Tooltip("두 경로가 이 거리 안이면 '같은 길'로 본다(m)")]
+	public float routeNearDistance = 3f;
+
+	[Tooltip("플레이어 이 반경 안은 겹침 판정에서 제외한다(m). 모든 경로가 플레이어에서 만나므로 " +
+		"빼지 않으면 지워지지 않는 바닥값이 생긴다. 다만 넓게 빼면 공유 통로가 묻히므로 주의")]
+	public float convergenceExcludeRadius = 8f;
 
 	[Tooltip("차단 후보: 플레이어에게서 8방향으로 바닥을 따라 최대 이만큼 뻗어 본다(m)")]
 	public float cutCandidateMaxDistance = 18f;
@@ -275,6 +293,16 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("추격↔차단 역할이 바뀐 직후 다시 바뀌지 않는 시간(초)")]
 	public float roleLockTime = 2f;
 
+	[Tooltip("경유지에 이 거리 안으로 들어오면 지난 것으로 보고 최종 접근으로 넘어간다(m)")]
+	public float waypointReachedDistance = 3f;
+
+	[Tooltip("최종 접근 중 플레이어 위치를 다시 조준하는 간격(초). 0이면 매 프레임")]
+	public float finalApproachRefresh = 0.15f;
+
+	[Tooltip("플레이어에게 이 거리 안까지 붙었으면 감독이 경로를 갈아엎지 않는다(m). " +
+		"거의 닿았는데 갑자기 딴 길로 돌아가는 것을 막는다. 멀리 있을 때는 잠기지 않아야 겹침 배정이 계속 돈다")]
+	public float routeLockDistance = 12f;
+
 	public static List<MonsterAI> activeMonsters = new List<MonsterAI>();
 
 	private NavMeshAgent agent;
@@ -314,9 +342,20 @@ public class MonsterAI : MonoBehaviour
 	private Vector3 interceptWaypoint;      // 빙 돌아가기: 여기를 먼저 들른 뒤 차단 지점으로
 	private bool hasWaypoint;
 	private float interceptTimer;
+
+	// 최종 접근: 경유지를 지났고, 이제 플레이어의 현재 위치를 계속 따라간다
+	private bool finalApproach;
+
+	private float nextFinalRefresh;
+
+	private Collider myCollider;
+
+	private Collider playerCollider;
+
+	private bool playerPassThrough;
 	private float roleLockUntil;
 	private float noiseReactReadyAt;        // 이 시각 전에는 다시 멈칫하지 않는다
-	private const float WaypointReached = 3f;
+	private float WaypointReached => waypointReachedDistance;
 
 	// 사냥 속도 (감독이 정함, 음수면 chaseSpeed)
 	private float huntSpeed = -1f;
@@ -385,6 +424,24 @@ public class MonsterAI : MonoBehaviour
 	public bool IsAvailableForOrders =>
 		currentState != State.Chase && currentState != State.Stun && !isJumping;
 
+	/// <summary>경유지를 지나 플레이어에게 곧장 들어가는 중인가. 이 동안은 멈추지 않는다.</summary>
+	public bool IsFinalApproach => finalApproach && currentState == State.Intercept;
+
+	/// <summary>
+	/// 감독이 경로를 갈아엎으면 안 되는 상태인가. 최종 접근 중이고 <b>플레이어에게 충분히 붙었을 때만</b> 잠근다.
+	/// 멀리서부터 잠그면 겹침 배정이 영영 돌지 않는다(QA 2026-09-20에서 잡힌 문제).
+	/// </summary>
+	public bool IsRouteLocked
+	{
+		get
+		{
+			if (!IsFinalApproach || player == null) { return false; }
+			Vector3 gap = player.position - base.transform.position;
+			gap.y = 0f;
+			return gap.magnitude <= routeLockDistance;
+		}
+	}
+
 	/// <summary>AI 테스트 씬 표시용 상태 이름.</summary>
 	public string StateLabel
 	{
@@ -402,7 +459,7 @@ public class MonsterAI : MonoBehaviour
 				return (isRushing && !HasArrived()) ? "이동" : "수색";
 			case State.Return: return "복귀";
 			case State.Stun: return "기절";
-			case State.Intercept: return hasWaypoint ? "돌아가는 중" : (HasArrived() ? "차단 대기" : "차단 이동");
+			case State.Intercept: return hasWaypoint ? "우회 이동" : (finalApproach ? "최종 접근" : "접근");
 			}
 			return currentState.ToString();
 		}
@@ -423,6 +480,7 @@ public class MonsterAI : MonoBehaviour
 		agent = GetComponent<NavMeshAgent>();
 		animator = GetComponent<Animator>();
 		rb = GetComponent<Rigidbody>();
+		myCollider = GetComponent<Collider>();
 		startPosition = base.transform.position;
 		startRotation = base.transform.rotation;
 	}
@@ -435,6 +493,7 @@ public class MonsterAI : MonoBehaviour
 	private void OnDisable()
 	{
 		activeMonsters.Remove(this);
+		if (playerPassThrough) { SetPlayerPassThrough(false); }
 	}
 
 	private void Start()
@@ -488,6 +547,7 @@ public class MonsterAI : MonoBehaviour
 		huntSpeed = -1f;
 		pendingNoise = false;
 		hasWaypoint = false;
+		finalApproach = false;
 		noiseReactReadyAt = 0f;
 		homeLockUntil = 0f;
 		checkingCorner = false;
@@ -656,7 +716,41 @@ public class MonsterAI : MonoBehaviour
 		else if (!viaWaypoint)
 		{
 			hasWaypoint = false;
+			finalApproach = false;
 		}
+		if (currentState == State.Intercept)
+		{
+			UpdateInterceptDestination();
+			return;
+		}
+		finalApproach = false;
+		roleLockUntil = Time.time + roleLockTime;
+		ChangeState(State.Intercept);
+	}
+
+	/// <summary>
+	/// 추적 명령(2026-09-20 개편). 목적지는 언제나 플레이어다 — 감독이 정하는 것은 "어느 길로"뿐이다.
+	/// 경유지가 있으면 그쪽을 먼저 들르고, 지나면 최종 접근으로 넘어가 멈추지 않고 플레이어를 따라간다.
+	/// 차단 지점에 가서 기다리던 예전 방식(CommandAmbush)을 대체한다.
+	/// </summary>
+	public void CommandPursue(Vector3 waypoint, bool viaWaypoint)
+	{
+		if (isStunned) { return; }
+		pendingNoise = false;
+		givingUp = false;
+		interceptTimer = interceptTimeout;
+		if (viaWaypoint && Vector3.Distance(base.transform.position, waypoint) > WaypointReached)
+		{
+			interceptWaypoint = waypoint;
+			hasWaypoint = true;
+			finalApproach = false;
+		}
+		else
+		{
+			hasWaypoint = false;
+			finalApproach = true;
+		}
+		if (player != null) { interceptPoint = player.position; }
 		if (currentState == State.Intercept)
 		{
 			UpdateInterceptDestination();
@@ -677,6 +771,13 @@ public class MonsterAI : MonoBehaviour
 				return;
 			}
 			hasWaypoint = false;
+			finalApproach = true;
+		}
+		// 최종 접근: 낡은 좌표가 아니라 플레이어의 지금 위치로
+		if (finalApproach && player != null)
+		{
+			interceptPoint = player.position;
+			nextFinalRefresh = Time.time + Mathf.Max(0f, finalApproachRefresh);
 		}
 		agent.SetDestination(interceptPoint);
 	}
@@ -699,6 +800,7 @@ public class MonsterAI : MonoBehaviour
 		pendingNoise = false;
 		checkingCorner = false;
 		hasWaypoint = false;
+		finalApproach = false;
 		homeLockUntil = Time.time + Mathf.Max(0f, lockSeconds);
 		ChangeState(IsOutsideZone() ? State.Return : State.Patrol);
 	}
@@ -710,6 +812,7 @@ public class MonsterAI : MonoBehaviour
 		agent.Warp(position);
 		agent.ResetPath();
 		hasWaypoint = false;
+		finalApproach = false;
 		ChangeState(State.Patrol);
 	}
 
@@ -838,6 +941,44 @@ public class MonsterAI : MonoBehaviour
 		}
 	}
 
+	/// <summary>플레이어와의 충돌만 켜고 끈다. 레이어가 아니라 콜라이더 쌍 단위라 지형·동료 충돌은 그대로다.</summary>
+	private void SetPlayerPassThrough(bool on)
+	{
+		if (!stunLetPlayerPass) { return; }
+		if (myCollider == null) { myCollider = GetComponent<Collider>(); }
+		if (playerCollider == null && player != null) { playerCollider = player.GetComponent<Collider>(); }
+		if (myCollider == null || playerCollider == null) { return; }
+		if (!myCollider.enabled || !playerCollider.enabled) { return; }
+		Physics.IgnoreCollision(myCollider, playerCollider, on);
+		playerPassThrough = on;
+	}
+
+	/// <summary>플레이어와 몸이 실제로 겹쳐 있는가.</summary>
+	private bool OverlapsPlayer()
+	{
+		if (myCollider == null || playerCollider == null) { return false; }
+		if (!myCollider.enabled || !playerCollider.enabled) { return false; }
+		return Physics.ComputePenetration(
+			myCollider, myCollider.transform.position, myCollider.transform.rotation,
+			playerCollider, playerCollider.transform.position, playerCollider.transform.rotation,
+			out Vector3 _, out float _);
+	}
+
+	/// <summary>
+	/// 플레이어와 몸이 겹쳐 있는 동안은 충돌을 되살리지 않는다 — 겹친 채 복구하면 서로 튕겨나가거나 벽 밖으로 밀린다.
+	/// 플레이어는 하나뿐이고 빠져나가는 중이라 짧게 끝난다. 상한을 넘으면 그냥 복구한다(무한 대기 방지).
+	/// </summary>
+	private IEnumerator RestoreCollisionWhenClear()
+	{
+		float waited = 0f;
+		while (playerPassThrough && waited < stunRestoreMaxDelay && OverlapsPlayer())
+		{
+			waited += Time.deltaTime;
+			yield return null;
+		}
+		SetPlayerPassThrough(false);
+	}
+
 	private IEnumerator ProcessStunReaction(Vector3 shooterPosition)
 	{
 		isStunned = true;
@@ -847,6 +988,9 @@ public class MonsterAI : MonoBehaviour
 		agent.isStopped = true;
 		agent.velocity = Vector3.zero;
 		agent.updateRotation = false;
+		// 좌클릭으로 만든 틈 — 굳어 있는 동안 플레이어만 몸을 통과한다(기획 2026-09-20).
+		// 몬스터끼리는 열지 않는다: 겹친 채 스턴이 풀리면 서로 튕겨나가거나 끼인다.
+		SetPlayerPassThrough(true);
 		if (animator != null)
 		{
 			animator.SetTrigger("Hit");
@@ -873,6 +1017,10 @@ public class MonsterAI : MonoBehaviour
 		agent.updateRotation = true;
 		agent.isStopped = false;
 		isStunned = false;
+
+		// 충돌 복구만 따로 기다린다. AI는 곧바로 깨어난다 —
+		// 코루틴 본문에서 기다리면 플레이어가 몸 안에 서 있는 동안 몬스터가 계속 굳어 있다(QA 2026-09-20).
+		if (playerPassThrough) { StartCoroutine(RestoreCollisionWhenClear()); }
 		if (stateBeforeStun == State.Chase)
 		{
 			// 기절 전 쫓던 개체는 다시 허가를 받아 추적을 이어간다(끈질김은 남은 만큼). 자리가 없으면 감독이 막는 역할을 준다
@@ -1034,12 +1182,14 @@ public class MonsterAI : MonoBehaviour
 	{
 		if (hasWaypoint && Vector3.Distance(base.transform.position, interceptWaypoint) <= WaypointReached)
 		{
+			// 경유지 통과 — 여기서부터 최종 접근이다
 			hasWaypoint = false;
+			finalApproach = true;
 			UpdateInterceptDestination();
 		}
 		if (canSee && Vector3.Distance(base.transform.position, player.position) <= ambushEngageRange)
 		{
-			// 덮치기도 허가제: 추격자가 가득 차 있으면 감독이 교대 여부를 정하고, 아니면 자리를 지킨다
+			// 덮치기도 허가제: 자리가 없으면 거부되지만, 아래 최종 접근으로 계속 밀고 들어간다
 			lastKnownPos = player.position;
 			if (TryStartChase())
 			{
@@ -1047,8 +1197,19 @@ public class MonsterAI : MonoBehaviour
 			}
 		}
 
-		if (HasArrived())
+		if (finalApproach)
 		{
+			// 멈추지 않는다. 낡은 좌표가 아니라 플레이어의 지금 위치를 계속 다시 조준한다(기획 2026-09-20)
+			if (player != null && Time.time >= nextFinalRefresh)
+			{
+				nextFinalRefresh = Time.time + Mathf.Max(0f, finalApproachRefresh);
+				interceptPoint = player.position;
+				agent.SetDestination(interceptPoint);
+			}
+		}
+		else if (HasArrived())
+		{
+			// 경유지로 가는 길이 막혀 멈춘 경우에만 두리번거린다
 			if (canSee)
 			{
 				Vector3 look = player.position - base.transform.position;

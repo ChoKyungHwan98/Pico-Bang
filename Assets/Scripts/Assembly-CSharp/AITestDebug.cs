@@ -67,6 +67,16 @@ public class AITestDebug : MonoBehaviour
 	private LineRenderer playerMarker, playerVelocity, noiseRing;
 	private LineRenderer sightCrossA, sightCrossB, sightArrow;
 	private readonly List<LineRenderer> candidateLines = new List<LineRenderer>();
+	private readonly List<LineRenderer> routeLines = new List<LineRenderer>();
+	private readonly List<LineRenderer> routeWaypoints = new List<LineRenderer>();
+	private LineRenderer convergeRing;
+
+	/// <summary>개체별 경로 색 — 감독의 RouteInfo.colorIndex 순서를 따른다.</summary>
+	private static readonly Color[] RouteColors =
+	{
+		new Color(0.30f, 0.85f, 1.00f), new Color(1.00f, 0.80f, 0.20f), new Color(0.50f, 1.00f, 0.45f),
+		new Color(1.00f, 0.45f, 0.85f), new Color(1.00f, 0.55f, 0.25f), new Color(0.70f, 0.60f, 1.00f),
+	};
 	private static readonly Color CandidateColor = new Color(0.6f, 0.6f, 0.65f, 0.8f);
 	private static readonly Color RejectedColor = new Color(0.45f, 0.45f, 0.5f, 0.45f);
 	private float noiseRingUntil;
@@ -396,6 +406,7 @@ public class AITestDebug : MonoBehaviour
 		DrawOrderPoints();
 		DrawSighting();
 		DrawCutCandidates();
+		DrawRoutes();
 
 		if (player != null)
 		{
@@ -516,6 +527,53 @@ public class AITestDebug : MonoBehaviour
 		for (; i < candidateLines.Count; i++) { candidateLines[i].enabled = false; }
 	}
 
+	/// <summary>
+	/// 배정된 전체 경로를 개체별 색으로 그린다(기획 2026-09-20).
+	/// 굵은 선 = 감독이 준 길, 가는 선 = 직행 추격자의 참고 경로, 동그라미 = 경유지.
+	/// 플레이어 둘레 원 = 겹침 판정에서 빼는 수렴 구간.
+	/// </summary>
+	private void DrawRoutes()
+	{
+		MonsterDirector d = MonsterDirector.Instance;
+		int li = 0, wi = 0;
+		bool show = d != null && d.IsHunting;
+		if (show)
+		{
+			foreach (KeyValuePair<MonsterAI, MonsterDirector.RouteInfo> kv in d.DebugRoutes)
+			{
+				MonsterDirector.RouteInfo r = kv.Value;
+				if (kv.Key == null || r == null || r.corners == null || r.corners.Length < 2) { continue; }
+				if (li >= routeLines.Count) { routeLines.Add(NewLine("Route" + li, Color.white, false)); }
+				LineRenderer lr = routeLines[li++];
+				Color c = RouteColors[Mathf.Abs(r.colorIndex) % RouteColors.Length];
+				if (r.directChaser) { c.a = 0.45f; }
+				lr.startColor = lr.endColor = c;
+				lr.widthMultiplier = r.directChaser ? lineWidth * 0.8f : lineWidth * 1.6f;
+				lr.enabled = true;
+				lr.positionCount = r.corners.Length;
+				for (int i = 0; i < r.corners.Length; i++) { lr.SetPosition(i, Lift(r.corners[i])); }
+				if (r.detour)
+				{
+					if (wi >= routeWaypoints.Count) { routeWaypoints.Add(NewLine("RouteWp" + wi, Color.white, true)); }
+					LineRenderer wp = routeWaypoints[wi++];
+					wp.startColor = wp.endColor = c;
+					wp.widthMultiplier = lineWidth;
+					wp.enabled = true;
+					SetCircle(wp, r.waypoint, 2.5f);
+				}
+			}
+		}
+		for (; li < routeLines.Count; li++) { routeLines[li].enabled = false; }
+		for (; wi < routeWaypoints.Count; wi++) { routeWaypoints[wi].enabled = false; }
+
+		// 수렴 구간 — 이 안은 모든 길이 만나므로 겹침을 세지 않는다
+		if (convergeRing == null) { convergeRing = NewLine("ConvergeRing", new Color(1f, 0.35f, 0.25f, 0.8f), true); }
+		bool ring = show && player != null && d.DebugConvergenceRadius > 0.1f;
+		convergeRing.enabled = ring;
+		if (ring) { SetCircle(convergeRing, player.position, d.DebugConvergenceRadius); }
+	}
+
+
 	/// <summary>조정자의 마지막 목격 기록: ✕ 위치 + 알고 있는 이동 방향 화살표.</summary>
 	private void DrawSighting()
 	{
@@ -609,7 +667,9 @@ public class AITestDebug : MonoBehaviour
 				if (m == null) { continue; }
 				string order = d != null ? d.DebugOrderLabel(m) : "";
 				string tag = order.Length > 0 ? " [" + order + "]" : "";
-				DrawLabel(m.transform.position, m.name.Replace("Monster_", "") + tag + "\n" + m.StateLabel, StateColor(m));
+				string route = d != null ? d.DebugRouteLabel(m) : "";
+				DrawLabel(m.transform.position, m.name.Replace("Monster_", "") + tag + "\n" + m.StateLabel
+					+ (route.Length > 0 ? "\n" + route : ""), StateColor(m));
 			}
 			if (player != null) { DrawLabel(player.position, "플레이어", Color.white); }
 			if (d != null && d.HasSighting && (d.IsHunting || d.SightingAge < 10f))
@@ -653,11 +713,13 @@ public class AITestDebug : MonoBehaviour
 		{
 			if (m == null) { continue; }
 			string order = d != null ? d.DebugOrderLabel(m) : "";
+			string route = d != null ? d.DebugRouteLabel(m) : "";
 			sb.AppendLine("<color=#" + ColorUtility.ToHtmlStringRGB(StateColor(m)) + ">■</color> " + m.name + "  " + m.StateLabel
-				+ (order.Length > 0 ? "  [" + order + "]" : ""));
+				+ (order.Length > 0 ? "  [" + order + "]" : "")
+				+ (route.Length > 0 ? "  <b>" + route + "</b>" : ""));
 		}
 		sb.Append("<color=#8CD98C>순찰</color> <color=#FF9A1A>이동</color> <color=#FFE633>수색</color> <color=#FF4040>추격</color> "
-			+ "<color=#D966FF>차단</color> <color=#4DCCFF>복귀</color> 기절 · <color=#D966FF>○</color> 차단 지점 <color=#59D9FF>○</color> 경유 지점(빙 돌아가기) <color=#FFE633>○</color> 수색 지점 <color=#FF4D4D>✕</color> 마지막 목격");
+			+ "<color=#D966FF>우회</color> <color=#4DCCFF>복귀</color> 기절 · Scene뷰: 색선=배정 경로, 큰원=경유지, 머리위원=최종접근, 플레이어둘레원=겹침제외 · ov=겹침률");
 		GUI.Box(new Rect(10, 10, 640, 80 + MonsterAI.activeMonsters.Count * 20 + 20), sb.ToString(), panelStyle);
 	}
 
