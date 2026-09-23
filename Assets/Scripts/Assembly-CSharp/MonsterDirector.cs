@@ -53,12 +53,19 @@ public class MonsterDirector : MonoBehaviour
     private readonly Dictionary<MonsterAI, float> followSince = new Dictionary<MonsterAI, float>();
     private readonly Dictionary<MonsterAI, float> blockedUntil = new Dictionary<MonsterAI, float>();
     private readonly Dictionary<MonsterAI, float> zoneSwapUntil = new Dictionary<MonsterAI, float>();
+    private readonly Dictionary<MonsterAI, float> routeInvalidSince = new Dictionary<MonsterAI, float>();
+    private readonly Dictionary<MonsterAI, Vector3> routeInvalidGoal = new Dictionary<MonsterAI, Vector3>();
+    private readonly Dictionary<MonsterAI, Vector3> invalidatedRouteGoal = new Dictionary<MonsterAI, Vector3>();
+    private const float CutoffReachedDistance = 6f;
+    private const float CutoffPassedDot = -.55f;
+    private const float RouteInvalidHold = .4f;
+    private const float ForcedReplanCooldown = .8f;
     private float nextEncounterPlan, nextZoneSwap, directionEvidenceTime = float.NegativeInfinity;
     private MonsterAI pressure, spotter, global;
     private Transform player;
     private Vector3 knownPosition, previousSighting, sightDirection, evidenceDirection;
     private float knowledgeTime = float.NegativeInfinity, sightTime = float.NegativeInfinity;
-    private float nextPlan, nextSafety, pressureSince;
+    private float nextPlan, nextSafety, pressureSince, lastForcedReplan = float.NegativeInfinity;
     private bool hunting, hasSighting;
     private int followBreaks, handovers, planCount;
     private string summary = "대기";
@@ -121,9 +128,9 @@ public class MonsterDirector : MonoBehaviour
     {
         if (m == null || m == pressure || !routes.TryGetValue(m, out var old)) return null;
         float distance = Vector3.Distance(old.goal, knownPosition);
-        if (distance < 8f || distance > 45f) return null;
+        if (distance < CutoffReachedDistance || distance > 45f) return null;
         Vector3 direction = StrategicDirection;
-        if (direction.sqrMagnitude > .1f && Vector3.Dot((old.goal - knownPosition).normalized, direction) < -.2f) return null;
+        if (direction.sqrMagnitude > .1f && Vector3.Dot((old.goal - knownPosition).normalized, direction) < CutoffPassedDot) return null;
         return old.goal;
     }
 
@@ -143,6 +150,8 @@ public class MonsterDirector : MonoBehaviour
         knowledgeTime = sightTime = float.NegativeInfinity;
         blockedUntil.Clear(); followSince.Clear();
         zoneSwapUntil.Clear(); nextEncounterPlan = nextZoneSwap = 0;
+        routeInvalidSince.Clear(); routeInvalidGoal.Clear(); invalidatedRouteGoal.Clear();
+        lastForcedReplan = float.NegativeInfinity;
         evidenceDirection = Vector3.zero; directionEvidenceTime = float.NegativeInfinity;
     }
     private void EndHunt()
@@ -154,6 +163,7 @@ public class MonsterDirector : MonoBehaviour
         preparations.Clear();
         preparationProgress.Clear();
         team.Clear(); routes.Clear(); orders.Clear(); waypoints.Clear(); candidates.Clear();
+        routeInvalidSince.Clear(); routeInvalidGoal.Clear(); invalidatedRouteGoal.Clear();
         pressure = null; hunting = false; summary = "수색 종료 · 구역 복귀";
     }
     private void Remember(Vector3 point, float timestamp)
@@ -169,23 +179,52 @@ public class MonsterDirector : MonoBehaviour
         knownPosition = point; knowledgeTime = Mathf.Min(Time.time, timestamp);
         if (pressure != null) pressure.RefreshPursuitEvidence(point);
         if (!hunting) { hunting = true; nextPlan = 0; }
-        else
+        else EvaluateRouteInvalidation(point);
+    }
+
+    /// <summary>
+    /// A sight report arrives from every monster that can see the player, often several times in one frame.
+    /// Route changes therefore require a sustained invalid condition and are emitted once per assigned goal.
+    /// Player knowledge remains live; only the tactical mission is stabilised.
+    /// </summary>
+    private void EvaluateRouteInvalidation(Vector3 point)
+    {
+        Vector3 direction = StrategicDirection;
+        foreach (var pair in routes)
         {
-            // Replan promptly only when new evidence actually invalidates a reserved cutoff.
-            Vector3 direction = StrategicDirection;
-            foreach (var pair in routes)
+            if (pair.Key == null || pair.Value.directChaser) continue;
+            Vector3 goal = pair.Value.goal;
+            Vector3 gap = Vector3.ProjectOnPlane(goal - point, Vector3.up);
+            bool reached = gap.magnitude < CutoffReachedDistance;
+            bool passed = direction.sqrMagnitude > .1f && gap.sqrMagnitude > 1f &&
+                Vector3.Dot(gap.normalized, direction) < CutoffPassedDot;
+            if (!reached && !passed)
             {
-                if (pair.Value.directChaser) continue;
-                Vector3 gap = Vector3.ProjectOnPlane(pair.Value.goal - point, Vector3.up);
-                if (gap.magnitude < 8f || (direction.sqrMagnitude > .1f && gap.sqrMagnitude > 1f &&
-                    Vector3.Dot(gap.normalized, direction) < -.2f))
-                {
-                    nextPlan = 0;
-                    PlaytestRecorder.Record("corridor_invalidated", pair.Key.name, pair.Key.transform.position,
-                        gap.magnitude < 8f ? "player_reached_cutoff" : "player_passed_cutoff", pair.Value.goal);
-                    break;
-                }
+                routeInvalidSince.Remove(pair.Key);
+                routeInvalidGoal.Remove(pair.Key);
+                invalidatedRouteGoal.Remove(pair.Key);
+                continue;
             }
+
+            if (!routeInvalidGoal.TryGetValue(pair.Key, out Vector3 watchedGoal) ||
+                Vector3.Distance(watchedGoal, goal) >= 1f)
+            {
+                routeInvalidGoal[pair.Key] = goal;
+                routeInvalidSince[pair.Key] = Time.time;
+                invalidatedRouteGoal.Remove(pair.Key);
+                continue;
+            }
+            if (invalidatedRouteGoal.TryGetValue(pair.Key, out Vector3 alreadyInvalidated) &&
+                Vector3.Distance(alreadyInvalidated, goal) < 1f) continue;
+            if (Time.time - routeInvalidSince[pair.Key] < RouteInvalidHold ||
+                Time.time - lastForcedReplan < ForcedReplanCooldown) continue;
+
+            lastForcedReplan = Time.time;
+            invalidatedRouteGoal[pair.Key] = goal;
+            nextPlan = Mathf.Min(nextPlan, Time.time);
+            PlaytestRecorder.Record("corridor_invalidated", pair.Key.name, pair.Key.transform.position,
+                reached ? "player_reached_cutoff" : "player_passed_cutoff", goal);
+            break;
         }
     }
     public void ReportSighting(MonsterAI observer, Vector3 position)
@@ -491,8 +530,8 @@ public class MonsterDirector : MonoBehaviour
             {
                 Vector3 towardGoal = Vector3.ProjectOnPlane(old.goal - knownPosition, Vector3.up);
                 bool stillAhead = strategicDirection.sqrMagnitude < .1f || towardGoal.sqrMagnitude < 1f ||
-                    Vector3.Dot(towardGoal.normalized, strategicDirection) >= -.2f;
-                var retainedPath = stillAhead && Vector3.Distance(old.goal, knownPosition) >= 8f &&
+                    Vector3.Dot(towardGoal.normalized, strategicDirection) >= CutoffPassedDot;
+                var retainedPath = stillAhead && Vector3.Distance(old.goal, knownPosition) >= CutoffReachedDistance &&
                     Vector3.Distance(old.goal, knownPosition) <= 55f ? planner.Path(m, m.transform.position, old.goal) : null;
                 if (retainedPath != null)
                 {
@@ -575,14 +614,17 @@ public class MonsterDirector : MonoBehaviour
                 Vector3 gap = front.transform.position - rear.transform.position; gap.y = 0;
                 Vector3 v = rear.PlanarVelocity;
                 float followDistance = Settings != null ? Mathf.Max(1f, Settings.followDistance) : 7f;
-                if (gap.magnitude < followDistance && gap.magnitude > .5f && v.magnitude > 2f &&
-                    Vector3.Dot(v.normalized, gap.normalized) > .8f && Vector3.Dot(v.normalized, front.PlanarVelocity.normalized) > .8f &&
+                Vector3 frontVelocity = front.PlanarVelocity;
+                bool sameFlow = frontVelocity.magnitude < 1.5f ||
+                    Vector3.Dot(v.normalized, frontVelocity.normalized) > .45f;
+                if (gap.magnitude < followDistance * 1.35f && gap.magnitude > .5f && v.magnitude > 1.5f &&
+                    Vector3.Dot(v.normalized, gap.normalized) > .6f && sameFlow &&
                     !NavMesh.Raycast(rear.transform.position, front.transform.position, out _, rear.NavigationFilter))
                 { following = true; break; }
             }
             if (!following) { followSince.Remove(rear); continue; }
             if (!followSince.TryGetValue(rear, out float since)) { followSince[rear] = Time.time; continue; }
-            float hold = Settings != null ? Mathf.Max(.2f, Settings.followHoldTime) : 1f;
+            float hold = Settings != null ? Mathf.Max(.35f, Settings.followHoldTime * .6f) : .6f;
             if (Time.time - since < hold) continue;
             PlaytestRecorder.Record("follow_break", rear.name, rear.transform.position, "same_corridor_queue");
             var here = rear.transform.position;
