@@ -18,7 +18,22 @@ public class MonsterDirector : MonoBehaviour
         }
     }
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-    private static void ResetStatics() { instance = null; isQuitting = false; }
+    private static void ResetStatics() { instance = null; isQuitting = false; NoiseReported = null; DecisionMade = null; }
+
+    /// <summary>표시용: 소리 한 번과 그 소리를 들은 몬스터들. ignored면 감독이 이 소리를 정보로 쓰지 않았다.</summary>
+    public struct NoiseReport
+    {
+        public Vector3 position;
+        public float radius;
+        public NoiseKind kind;
+        public MonsterAI[] listeners;
+        public bool ignored;
+    }
+    /// <summary>표시용(포트폴리오 지도): 소리가 날 때마다 알린다.</summary>
+    public static event System.Action<NoiseReport> NoiseReported;
+    /// <summary>표시용(포트폴리오 지도): 몬스터·감독이 판단을 바꿀 때마다 짧은 설명을 알린다. 몬스터가 없으면 감독의 판단.</summary>
+    public static event System.Action<MonsterAI, string> DecisionMade;
+    public static void Announce(MonsterAI m, string text) { DecisionMade?.Invoke(m, text); }
     public class RouteInfo
     {
         public Vector3[] corners;
@@ -79,6 +94,7 @@ public class MonsterDirector : MonoBehaviour
     public Vector3 SightingDirection => sightDirection;
     public string SightingSpotterName => spotter != null ? spotter.name : "-";
     public int DebugChaserCount => pressure != null && pressure.CurrentState == MonsterAI.State.Chase ? 1 : 0;
+    public MonsterAI DebugPressure => pressure;
     public IReadOnlyList<MonsterAI> DebugTeam => team;
     public IReadOnlyDictionary<MonsterAI, RouteInfo> DebugRoutes => routes;
     public IReadOnlyDictionary<MonsterAI, RouteInfo> DebugPreparations => preparations;
@@ -124,6 +140,10 @@ public class MonsterDirector : MonoBehaviour
     private int TeamSize => Settings != null ? Mathf.Max(1, Settings.huntTeamSize) : 3;
     // 추격자 뒤 줄에 들어온 시각 — 줄에서 빠지면 지운다
     private readonly Dictionary<MonsterAI, float> queueSince = new Dictionary<MonsterAI, float>();
+    // 추격자와 같은 길로 달려오는 두 번째 추격자가 된 시각 — 조건에서 빠지면 지운다
+    private readonly Dictionary<MonsterAI, float> extraChaseSince = new Dictionary<MonsterAI, float>();
+    // 이번 사냥에서 이미 우회로 해산한 개체. 또 같은 길로 붙으면 우회를 다시 주지 않고 복귀시킨다(우회↔추격 반복 방지)
+    private readonly HashSet<MonsterAI> dispersedThisHunt = new HashSet<MonsterAI>();
     private float Refresh => Settings != null ? Mathf.Clamp(Settings.layoutRefreshInterval, .3f, 1f) : .75f;
     private float EstimateArrival(MonsterRoutePlanner.Option route) => MonsterRoutePlanner.EstimateTravelTime(
         route, TrackingSpeedCap, FarSpeed, Settings != null ? Settings.huntNearDistance : 15f,
@@ -171,6 +191,7 @@ public class MonsterDirector : MonoBehaviour
         preparationProgress.Clear();
         team.Clear(); routes.Clear(); orders.Clear(); waypoints.Clear(); candidates.Clear();
         routeInvalidSince.Clear(); routeInvalidGoal.Clear(); invalidatedRouteGoal.Clear();
+        queueSince.Clear(); extraChaseSince.Clear(); dispersedThisHunt.Clear();
         pressure = null; hunting = false; summary = "수색 종료 · 구역 복귀";
     }
     private void Remember(Vector3 point, float timestamp)
@@ -239,24 +260,32 @@ public class MonsterDirector : MonoBehaviour
         if (observer == null || observer.IsInStun || observer.IsHomeLocked) return;
         if (hasSighting && Time.time - sightTime > .05f) sightDirection = (position - previousSighting).normalized;
         hasSighting = true; previousSighting = position; sightTime = Time.time; spotter = observer;
+        if (!hunting) Announce(observer, "플레이어 발견 → 사냥 시작");
         Remember(position, Time.time);
     }
     public void ReportTargetAlarm(Vector3 shotPosition, float shotTime)
     {
         // An old projectile impact cannot replace a more recent sighting.
-        if (Time.time - shotTime <= Memory) Remember(shotPosition, shotTime);
+        if (Time.time - shotTime > Memory) return;
+        if (!hunting) Announce(null, "과녁 경보 → 사냥 시작");
+        Remember(shotPosition, shotTime);
     }
     public void ReportNoise(Vector3 position, float radius, NoiseKind kind)
     {
-        if (hunting && kind == NoiseKind.TargetDestroyed) return;
-        int listeners = 0;
+        var heard = new List<MonsterAI>();
         foreach (var m in MonsterAI.activeMonsters)
         {
             if (m == null || m.IsInStun || m.IsHomeLocked) continue;
             if (Vector3.Distance(m.transform.position, position) <= Mathf.Min(radius, m.EffectiveHearingRange))
-                listeners++;
+                heard.Add(m);
         }
+        bool ignored = hunting && kind == NoiseKind.TargetDestroyed;
+        NoiseReported?.Invoke(new NoiseReport { position = position, radius = radius, kind = kind,
+            listeners = heard.ToArray(), ignored = ignored });
+        if (ignored) return;
+        int listeners = heard.Count;
         if (listeners == 0) return;
+        if (!hunting) Announce(heard[0], (kind == NoiseKind.Shot ? "총소리" : "과녁 소리") + " 들음 → 사냥 시작");
         Remember(position, Time.time);
         PlaytestRecorder.Record("noise_evidence", "player", position,
             kind + ":listeners=" + listeners.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -325,12 +354,18 @@ public class MonsterDirector : MonoBehaviour
         {
             nextSafety = Time.time + .2f;
             CheckPreparationProgress();
+            CheckExtraChasers();
             CheckDispersal();
             EnforceTeamCap();
         }
         if (Time.time >= nextZoneSwap) { nextZoneSwap = Time.time + 2f; TrySwapReturnZones(); }
         if (!hunting) return;
-        if (Time.time - knowledgeTime > Memory) { EndHunt(); return; }
+        if (Time.time - knowledgeTime > Memory)
+        {
+            Announce(null, Mathf.RoundToInt(Memory) + "초 동안 못 찾음 → 사냥 끝, 복귀");
+            EndHunt();
+            return;
+        }
         if (Time.time >= nextPlan) Coordinate();
         foreach (var m in team)
         {
@@ -467,7 +502,9 @@ public class MonsterDirector : MonoBehaviour
             {
                 handovers++;
                 PlaytestRecorder.Record("pressure_handover", p.monster.name, p.monster.transform.position, "from=" + pressure.name);
+                Announce(p.monster, "추적 넘겨받음 (" + ShortName(pressure) + " → 나)");
             }
+            else Announce(p.monster, "가장 가까워서 추적 맡음");
             pressureSince = Time.time;
         }
         pressure = p.monster;
@@ -490,6 +527,7 @@ public class MonsterDirector : MonoBehaviour
             if (!sameMission)
             {
                 PlaytestRecorder.Record("route_assigned", m.name, m.transform.position, i == 0 ? "pressure" : "cutoff", orders[m], o.corners);
+                if (i > 0) Announce(m, "다른 길로 우회해 길목 막기 (약 " + o.eta.ToString("F0") + "초)");
                 if (i > 0) PlaytestRecorder.Record("support_route_estimate", m.name, m.transform.position,
                     "estimated_seconds=" + o.eta.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) +
                     ";player_seconds=" + o.targetEta.ToString("F2", System.Globalization.CultureInfo.InvariantCulture), o.goal);
@@ -517,6 +555,7 @@ public class MonsterDirector : MonoBehaviour
             if (m == null || team.Contains(m) || m.IsInStun || m.IsDispersing || m.IsTraversingLink) continue;
             if (m.CurrentState != MonsterAI.State.Intercept && m.CurrentState != MonsterAI.State.Prepare) continue;
             PlaytestRecorder.Record("team_release_home", m.name, m.transform.position, "not_selected");
+            Announce(m, "팀에서 빠짐 → 복귀");
             m.CommandDispersalReturn();
         }
         preparations.Clear();
@@ -572,7 +611,7 @@ public class MonsterDirector : MonoBehaviour
         int sent = 0, home = 0;
         for (int i = 1; i < line.Count; i++)
         {
-            if (SendDispersalDetour(line[i], chaser, occupied)) sent++; else home++;
+            if (SendDispersalDetour(line[i], chaser, occupied, ShortName(chaser) + " 뒤에 줄지어 따라감")) sent++; else home++;
         }
         queueSince.Clear();
         PlaytestRecorder.Record("dispersal_command", chaser.name, chaser.transform.position,
@@ -603,6 +642,7 @@ public class MonsterDirector : MonoBehaviour
             if (keep.Contains(m)) continue;
             if (m == pressure) pressure = null;
             PlaytestRecorder.Record("team_cap_return", m.name, m.transform.position, "over_team_of_" + TeamSize);
+            Announce(m, "사냥 인원 " + TeamSize + "마리 초과, 가장 멂 → 복귀");
             m.CommandDispersalReturn();
         }
     }
@@ -611,7 +651,7 @@ public class MonsterDirector : MonoBehaviour
     /// 지정 위치: 추격자의 길과 겹치지 않고, 같은 명령으로 흩어지는 다른 개체의 길·목적지와도 겹치지 않는 가장 빨리 닿는 차단 지점.
     /// 그런 곳이 없으면 이동할 곳이 없으므로 곧바로 해산(복귀)한다. 이동 명령을 줬으면 true.
     /// </summary>
-    private bool SendDispersalDetour(MonsterAI m, MonsterAI chaser, List<MonsterRoutePlanner.Option> occupied)
+    private bool SendDispersalDetour(MonsterAI m, MonsterAI chaser, List<MonsterRoutePlanner.Option> occupied, string reason)
     {
         float maxSeconds = Settings != null ? Mathf.Clamp(Settings.detourTimeLimit, 3f, 12f) : 8f;
         if (planner.AnchorCount == 0) planner.Rebuild();
@@ -632,13 +672,102 @@ public class MonsterDirector : MonoBehaviour
         if (best == null)
         {
             PlaytestRecorder.Record("dispersal", m.name, m.transform.position, "no_route_return_home");
+            Announce(m, reason + " → 겹치지 않는 우회로가 없음 → 복귀");
             m.CommandDispersalReturn();
             return false;
         }
         occupied.Add(best);
         m.CommandDispersalDetour(best.corners, best.waypoint, best.detour);
+        if (!m.IsDispersalDetour)
+        {
+            // 명령을 받을 수 없는 상태였다 — 우회 중이라고 착각하지 않고 복귀시킨다
+            occupied.Remove(best);
+            PlaytestRecorder.Record("dispersal", m.name, m.transform.position, "detour_rejected_return_home");
+            Announce(m, reason + " → 복귀");
+            m.CommandDispersalReturn();
+            return false;
+        }
+        dispersedThisHunt.Add(m);
         PlaytestRecorder.Record("dispersal", m.name, m.transform.position, "move_to_assigned", best.goal, best.corners);
+        Announce(m, reason + " → 다른 길로 우회 (약 " + best.eta.ToString("F0") + "초)");
         return true;
+    }
+
+    private static string ShortName(MonsterAI m) => m == null ? "-" : m.name.Replace("Monster_", "");
+
+    /// <summary>
+    /// 직접 추격은 1마리(기획 2026-09-24 보완). 추격자와 같은 쪽에서, 또는 같은 길로 달려오는 두 번째 추격자는
+    /// QueueSeconds 동안 이어지면 해산한다 — 추격자·다른 우회와 겹치지 않는 길목이 있으면 우회, 없으면 복귀.
+    /// 반대쪽·옆에서 다른 길로 들어오는 추격자는 협공이므로 그대로 둔다. 플레이어 2m 안(잡기 직전)도 그대로 둔다.
+    /// 이번 사냥에서 이미 우회로 해산했던 개체가 또 같은 길로 붙으면 우회를 다시 주지 않고 복귀시킨다(우회↔추격 반복 방지).
+    /// 해산 복귀 개체는 집에 닿을 때까지 다시 추격하지 않는다(IsSightChaseCandidate).
+    /// </summary>
+    private void CheckExtraChasers()
+    {
+        if (!hunting) { extraChaseSince.Clear(); return; }
+        var chasers = new List<MonsterAI>();
+        foreach (var m in MonsterAI.activeMonsters)
+            if (m != null && m.CurrentState == MonsterAI.State.Chase && !m.IsInStun) chasers.Add(m);
+        if (chasers.Count < 2) { extraChaseSince.Clear(); return; }
+
+        Vector3 target = knownPosition;
+        MonsterAI nearest = chasers[0];
+        foreach (var m in chasers)
+            if (Vector3.Distance(m.transform.position, target) < Vector3.Distance(nearest.transform.position, target)) nearest = m;
+        // 남는 추격자: 지금 추격자가 가장 가까운 개체와 거의 같은 거리면 유지(자주 바꾸지 않는다), 아니면 가장 가까운 개체
+        MonsterAI keeper = pressure != null && chasers.Contains(pressure) &&
+            Vector3.Distance(pressure.transform.position, target) <= Vector3.Distance(nearest.transform.position, target) + 3f
+            ? pressure : nearest;
+        if (keeper != pressure)
+        {
+            if (pressure != null) handovers++;
+            PlaytestRecorder.Record("pressure_handover", keeper.name, keeper.transform.position,
+                "from=" + (pressure != null ? pressure.name : "-") + ";extra_chaser_check");
+            pressure = keeper; pressureSince = Time.time; nextPlan = 0;
+        }
+        foreach (var k in new List<MonsterAI>(extraChaseSince.Keys))
+            if (k == null || k == keeper || !chasers.Contains(k)) extraChaseSince.Remove(k);
+
+        if (planner.AnchorCount == 0) planner.Rebuild();
+        var keeperPath = planner.Path(keeper, keeper.transform.position, target);
+        var keeperOption = keeperPath != null ? MonsterRoutePlanner.Make(keeper, keeperPath, target, false, false) : null;
+        Vector3 toKeeper = Vector3.ProjectOnPlane(keeper.transform.position - target, Vector3.up);
+        var occupied = new List<MonsterRoutePlanner.Option>();
+        bool changed = false;
+        foreach (var m in chasers)
+        {
+            if (m == keeper) continue;
+            // 점프 중에는 명령을 바꾸지 않는다 — 다음 검사에서 다시 본다(타이머는 유지)
+            if (m.IsTraversingLink) continue;
+            Vector3 toM = Vector3.ProjectOnPlane(m.transform.position - target, Vector3.up);
+            if (toM.magnitude <= 2f) { extraChaseSince.Remove(m); continue; }
+            bool sameSide = toKeeper.magnitude <= 2f || Vector3.Dot(toM.normalized, toKeeper.normalized) > .5f;
+            bool sharedRoute = false;
+            if (!sameSide && keeperOption != null)
+            {
+                var path = planner.Path(m, m.transform.position, target);
+                sharedRoute = path != null && MonsterRoutePlanner.Conflict(
+                    MonsterRoutePlanner.Make(m, path, target, false, false), keeperOption, out _);
+            }
+            if (!sameSide && !sharedRoute) { extraChaseSince.Remove(m); continue; }   // 협공
+            if (!extraChaseSince.TryGetValue(m, out float since)) { extraChaseSince[m] = Time.time; continue; }
+            if (Time.time - since < QueueSeconds) continue;
+
+            extraChaseSince.Remove(m);
+            changed = true;
+            string reason = ShortName(keeper) + "와 같은 길로 추격 중";
+            if (dispersedThisHunt.Contains(m))
+            {
+                PlaytestRecorder.Record("extra_chaser", m.name, m.transform.position, "repeat_return_home;keeper=" + keeper.name);
+                Announce(m, reason + " (두 번째) → 복귀");
+                m.CommandDispersalReturn();
+                continue;
+            }
+            PlaytestRecorder.Record("extra_chaser", m.name, m.transform.position,
+                (sameSide ? "same_side" : "shared_route") + ";keeper=" + keeper.name);
+            SendDispersalDetour(m, keeper, occupied, reason);
+        }
+        if (changed) nextPlan = 0;
     }
 
     private void CheckPreparationProgress()

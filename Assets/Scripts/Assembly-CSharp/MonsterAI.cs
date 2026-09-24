@@ -254,6 +254,11 @@ public class MonsterAI : MonoBehaviour
 	private bool returningFromDispersal;
 	public bool IsDispersing => dispersalDetour || returningFromDispersal;
 	public bool IsDispersalDetour => dispersalDetour && currentState == State.Intercept;
+	/// <summary>해산·인원 초과로 집에 가는 중. 집에 닿을 때까지 다시 추격하지 않는다.</summary>
+	public bool IsDispersalReturn => returningFromDispersal && currentState == State.Return;
+	/// <summary>표시용: 지금 따라가는 우회 경로(없으면 null).</summary>
+	public Vector3[] DebugTacticalRoute =>
+		(currentState == State.Intercept || currentState == State.Prepare) ? tacticalCorners : null;
 	// 우회 끝 판정 중(도착해서 찾으면 추적) — 감독이 추격을 허가한다
 	private bool finishingDetour;
 	/// <summary>
@@ -978,6 +983,7 @@ public class MonsterAI : MonoBehaviour
 	{
 		isStunned = true;
 		PlaytestRecorder.Record("monster_stunned", name, transform.position);
+		MonsterDirector.Announce(this, "레이저 맞음 → 감전 " + (stunFreezeTime + stunRecoverTime).ToString("F0") + "초");
 		pendingNoise = false;
 		stateBeforeStun = currentState;
 		ChangeState(State.Stun);
@@ -1106,6 +1112,7 @@ public class MonsterAI : MonoBehaviour
 	{
 		lostSight = false;
 		givingUp = true;
+		MonsterDirector.Announce(this, "끝내 놓침 → 둘러본 뒤 복귀");
 		lastKnownPos = base.transform.position;
 		ChangeState(State.Investigate);
 		isRushing = false;
@@ -1219,9 +1226,11 @@ public class MonsterAI : MonoBehaviour
 		if (chased)
 		{
 			PlaytestRecorder.Record("dispersal_found", name, transform.position, "chase");
+			MonsterDirector.Announce(this, "우회 끝에서 발견 → 추격");
 			return;
 		}
 		PlaytestRecorder.Record("dispersal_return_home", name, transform.position, "not_found");
+		MonsterDirector.Announce(this, "우회 끝에 없음 → 복귀");
 		CommandDispersalReturn();
 	}
 
@@ -1274,6 +1283,7 @@ public class MonsterAI : MonoBehaviour
 	private void EnterIdle(string reason)
 	{
 		PlaytestRecorder.Record("monster_idle", name, transform.position, reason);
+		MonsterDirector.Announce(this, "할 일 없음 → 멈춤");
 		if (showDebugLog)
 		{
 			Debug.Log($"<color=grey><b>[멈춤]</b></color> {base.name} — {reason}");
@@ -1439,6 +1449,7 @@ public class MonsterAI : MonoBehaviour
 		{
 			return false;
 		}
+		if (currentState != State.Chase && !finishingDetour) { MonsterDirector.Announce(this, "직접 발견 → 추격"); }
 		StartChase();
 		return true;
 	}
