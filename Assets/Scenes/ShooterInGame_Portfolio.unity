@@ -6079,6 +6079,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1230}
+  - component: {fileID: 1590139404}
   m_Layer: 0
   m_Name: TPS_Cam_Pos
   m_TagString: MainCamera
@@ -9438,6 +9439,7 @@ GameObject:
   - component: {fileID: 1768}
   - component: {fileID: 2464}
   - component: {fileID: 1793}
+  - component: {fileID: 2466}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -48070,7 +48072,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: -0, z: -0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 50, y: -60}
+  m_AnchoredPosition: {x: 50, y: -260}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1933
@@ -48410,7 +48412,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 0, y: -0}
-  m_SizeDelta: {x: 0, y: 0}
+  m_SizeDelta: {x: 315, y: 0}
   m_Pivot: {x: 0, y: 1}
 --- !u!224 &1950
 RectTransform:
@@ -62579,8 +62581,8 @@ MonoBehaviour:
   deceleration: 70
   lookSensitivityScale: 1
   verticalSensitivityRatio: 1
-  minXAngle: -60
-  maxXAngle: 60
+  minXAngle: -55
+  maxXAngle: 50
   groundLayer:
     serializedVersion: 2
     m_Bits: 128
@@ -62772,6 +62774,29 @@ OcclusionCullingSettings:
     backfaceThreshold: 100
   m_SceneGUID: 00000000000000000000000000000000
   m_OcclusionCullingData: {fileID: 0}
+--- !u!114 &2466
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 558}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 956a0c3c8351a2f49a0fcb4d096451de, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RearViewMirror
+  panelSize: {x: 430, y: 220}
+  triggerDistance: 17
+  resetDistance: 22
+  showDuration: 1.25
+  replayCooldown: 2.8
+  wideFieldOfView: 58
+  zoomFieldOfView: 31
+  idleCameraDistance: 7.5
+  idleCameraHeight: 2.1
+  threatIntroTime: 0.28
+  threatOutroTime: 0.24
 --- !u!1 &74782471
 GameObject:
   m_ObjectHideFlags: 0
@@ -66639,55 +66664,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1361371819}
   m_CullTransparentMesh: 1
---- !u!1 &1386168708
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1386168710}
-  - component: {fileID: 1386168709}
-  m_Layer: 0
-  m_Name: ~AITestDebug
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1386168709
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1386168708}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ad3c2cfe36c7204428bb562e2b3c460f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::AITestDebug
-  testMoveSpeed: 11
-  testFastSpeed: 30
-  testNoiseRadius: 50
-  testFireInterval: 1.5
-  lineWidth: 0.6
---- !u!4 &1386168710
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1386168708}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1450873386
 GameObject:
   m_ObjectHideFlags: 0
@@ -67224,6 +67200,33 @@ MonoBehaviour:
   m_ChildScaleWidth: 0
   m_ChildScaleHeight: 0
   m_ReverseArrangement: 0
+--- !u!114 &1590139404
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 358}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 94efbd4770384a90b85783f132314a33, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ShoulderCameraRig
+  normalDistance: 2.35
+  sprintExtraDistance: 0.35
+  downwardDistanceBonus: 0.45
+  maxDownwardBoomPitch: 22
+  sprintFieldOfView: 66
+  squeezedFieldOfView: 72
+  distanceSmoothTime: 0.12
+  cameraRadius: 0.28
+  wallBuffer: 0.12
+  shoulderEscape: 0.5
+  verticalEscape: 0.32
+  hidePlayerDistance: 0.62
+  collisionMask:
+    serializedVersion: 2
+    m_Bits: 1281
 --- !u!1 &1607177193
 GameObject:
   m_ObjectHideFlags: 0
@@ -67750,6 +67753,52 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1647654200}
   m_CullTransparentMesh: 1
+--- !u!1 &1683772330
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1683772331}
+  - component: {fileID: 1683772332}
+  m_Layer: 0
+  m_Name: ~PortfolioCaptureView
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &1683772331
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1683772330}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1683772332
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1683772330}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7e497cfec969fdc4caa4c3dd05ac0f1b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PortfolioCaptureView
+  mapFirst: 0
+  showLabels: 1
 --- !u!1 &1705474439
 GameObject:
   m_ObjectHideFlags: 0
@@ -68811,8 +68860,8 @@ MonoBehaviour:
   - {fileID: 861126078}
   - {fileID: 1886073539}
   - {fileID: 1618803018}
-  baseGap: 18
-  kickGap: 34
+  baseGap: 14
+  kickGap: 27
   recoverSpeed: 9
   idleColor: {r: 1, g: 1, b: 1, a: 0.9}
   hitColor: {r: 1, g: 0.55, b: 0.1, a: 1}
@@ -68863,4 +68912,4 @@ SceneRoots:
   - {fileID: 1749}
   - {fileID: 1925}
   - {fileID: 1961}
-  - {fileID: 1386168710}
+  - {fileID: 1683772331}

@@ -31,16 +31,28 @@ public class CrosshairFx : MonoBehaviour
 
 	public Color hitColor = new Color(1f, 0.55f, 0.10f, 1f);
 
+	public Color targetColor = new Color(.45f, 1f, .92f, 1f);
+
+	[SerializeField] private float aimRange = 100f;
+
 	[Tooltip("맞혔을 때 색이 유지되는 시간")]
 	public float hitFlashTime = 0.18f;
 
 	private float currentGap;
 	private float hitFlashRemaining;
+	private Camera aimCamera;
+	private Transform player;
+	private readonly RaycastHit[] aimHits = new RaycastHit[24];
 
 	private void Awake()
 	{
 		Instance = this;
 		currentGap = baseGap;
+		aimCamera = Camera.main;
+		player = GameObject.FindGameObjectWithTag("Player")?.transform;
+		RectTransform reticle = transform.Find("Reticle") as RectTransform;
+		RectTransform dot = reticle != null ? reticle.Find("Dot") as RectTransform : null;
+		if (dot != null) dot.sizeDelta = new Vector2(6f, 6f);
 	}
 
 	private void OnDestroy()
@@ -80,9 +92,30 @@ public class CrosshairFx : MonoBehaviour
 		if (hitFlashRemaining > 0f)
 		{
 			hitFlashRemaining -= Time.deltaTime;
-			if (hitFlashRemaining <= 0f) { ApplyTint(idleColor); }
-			else { ApplyTint(hitColor); }
+			ApplyTint(hitColor);
 		}
+		else { ApplyTint(IsAimingAtTarget() ? targetColor : idleColor); }
+	}
+
+	private bool IsAimingAtTarget()
+	{
+		if (aimCamera == null) aimCamera = Camera.main;
+		if (aimCamera == null) return false;
+		Ray ray = aimCamera.ViewportPointToRay(new Vector3(.5f, .5f, 0f));
+		int count = Physics.RaycastNonAlloc(ray, aimHits, aimRange, ~0, QueryTriggerInteraction.Ignore);
+		RaycastHit nearest = default;
+		float nearestDistance = float.PositiveInfinity;
+		for (int i = 0; i < count; i++)
+		{
+			RaycastHit candidate = aimHits[i];
+			if (candidate.collider == null || (player != null && candidate.collider.transform.IsChildOf(player))) continue;
+			if (candidate.distance >= nearestDistance) continue;
+			nearest = candidate;
+			nearestDistance = candidate.distance;
+		}
+		if (nearest.collider == null) return false;
+		return nearest.collider.GetComponentInParent<Target>() != null ||
+			nearest.collider.GetComponentInParent<MonsterAI>() != null;
 	}
 
 	private void ApplyGap()

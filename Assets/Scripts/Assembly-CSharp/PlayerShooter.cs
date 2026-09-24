@@ -79,6 +79,7 @@ public class PlayerShooter : MonoBehaviour
 	private LineRenderer laserLine;
 
 	private float lastFireTime;
+	private readonly RaycastHit[] aimHits = new RaycastHit[32];
 
 	private void Awake()
 	{
@@ -151,8 +152,24 @@ public class PlayerShooter : MonoBehaviour
 		// ── 판정은 지금 끝낸다 ──────────────────────────────
 		// 발사체에 판정을 맡기면 빠르게 움직이는 대상에서 빗나가기 시작한다.
 		Vector3 origin = firePoint.position;
-		Vector3 impactPoint = origin + firePoint.forward * range;
-		bool didHit = Physics.Raycast(origin, firePoint.forward, out RaycastHit hitInfo, range, targetLayer);
+		Camera aimCamera = Camera.main;
+		Ray aimRay = aimCamera != null
+			? aimCamera.ViewportPointToRay(new Vector3(.5f, .5f, 0f))
+			: new Ray(origin, firePoint.forward);
+		Vector3 impactPoint = aimRay.origin + aimRay.direction * range;
+		bool didHit = TryRaycastIgnoringSelf(aimRay, range, out RaycastHit hitInfo);
+		if (didHit) impactPoint = hitInfo.point;
+
+		// The camera may see around a shoulder while the muzzle is still behind a nearby wall.
+		// A second trace prevents the projectile from passing through that wall.
+		Vector3 muzzlePath = impactPoint - origin;
+		if (muzzlePath.sqrMagnitude > .001f && TryRaycastIgnoringSelf(
+			new Ray(origin, muzzlePath.normalized), muzzlePath.magnitude, out RaycastHit muzzleHit))
+		{
+			didHit = true;
+			hitInfo = muzzleHit;
+			impactPoint = muzzleHit.point;
+		}
 
 		PlaytestRecorder.Record("shot", "player", shotPosition, didHit ? hitInfo.collider.name : "miss", impactPoint);
 
@@ -161,8 +178,8 @@ public class PlayerShooter : MonoBehaviour
 		if (didHit)
 		{
 			impactPoint = hitInfo.point;
-			hitMonster = hitInfo.collider.GetComponent<MonsterAI>();
-			hitTarget = hitInfo.collider.GetComponent<Target>();
+			hitMonster = hitInfo.collider.GetComponentInParent<MonsterAI>();
+			hitTarget = hitInfo.collider.GetComponentInParent<Target>();
 		}
 
 		if (useProjectile)
@@ -180,6 +197,22 @@ public class PlayerShooter : MonoBehaviour
 		// ── 예전 방식: 즉시 레이저 ──────────────────────────
 		yield return StartCoroutine(DrawBeam(origin, impactPoint));
 		ApplyHit(hitMonster, hitTarget, didHit, hitInfo, impactPoint, shotPosition, shotTime);
+	}
+
+	private bool TryRaycastIgnoringSelf(Ray ray, float distance, out RaycastHit nearest)
+	{
+		nearest = default;
+		float nearestDistance = float.PositiveInfinity;
+		int count = Physics.RaycastNonAlloc(ray, aimHits, distance, targetLayer, QueryTriggerInteraction.Ignore);
+		for (int i = 0; i < count; i++)
+		{
+			RaycastHit candidate = aimHits[i];
+			if (candidate.collider == null || candidate.collider.transform.IsChildOf(transform)) continue;
+			if (candidate.distance >= nearestDistance) continue;
+			nearest = candidate;
+			nearestDistance = candidate.distance;
+		}
+		return nearestDistance < float.PositiveInfinity;
 	}
 
 	/// <summary>발사체가 닿는 순간 실제 피격 처리와 연출을 한다.</summary>

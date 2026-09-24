@@ -16,6 +16,18 @@ public class PlayerController : MonoBehaviour, IGameResettable
 	[SerializeField]
 	private float speedSmoothTime = 0.1f;
 
+	[Tooltip("8방향 애니메이션이 새 방향으로 돌아가는 시간(초)")]
+	[SerializeField]
+	private float directionSmoothTime = 0.1f;
+
+	[Tooltip("이동 속도가 올라가는 가속도")]
+	[SerializeField]
+	private float acceleration = 48f;
+
+	[Tooltip("키를 놓았을 때 멈추는 감속도")]
+	[SerializeField]
+	private float deceleration = 70f;
+
 	[Header("Look Settings")]
 	[Tooltip("설정 메뉴의 마우스 감도에 곱해지는 개인 배수. 1이 기본")]
 	[SerializeField]
@@ -41,13 +53,7 @@ public class PlayerController : MonoBehaviour, IGameResettable
 	[SerializeField]
 	private Vector3 rayOriginOffset = new Vector3(0f, 0.1f, 0f);
 
-	[Header("Visual Effects (VFX)")]
-	[SerializeField]
-	private Material speedEffectMaterial;
-
-	[SerializeField]
-	private string materialPropertyName = "_FullscreenIntensity";
-
+	[Header("Sprint Camera Response")]
 	[SerializeField]
 	private float runThreshold = 9f;
 
@@ -92,15 +98,18 @@ public class PlayerController : MonoBehaviour, IGameResettable
 	private float animationSpeed;
 
 	private float speedSmoothVelocity;
+	private Vector3 planarVelocity;
+	private float animationDirectionAngle;
+	private float animationDirectionVelocity;
+	private bool animationDirectionInitialized;
 
 	private Vector3 initialPosition;
 
 	private Quaternion initialRotation;
 
-	private int intensityPropID;
-
-	// 달리기 연출 강도 0~1. 풀스크린 속도선 머티리얼(_FullscreenIntensity)로 넘어간다.
+	// Sprint camera distance and field of view still use this 0-1 value.
 	private float speedEffectIntensity;
+	public float SprintVisualStrength => Mathf.Clamp01(speedEffectIntensity);
 
 	private void Awake()
 	{
@@ -112,7 +121,6 @@ public class PlayerController : MonoBehaviour, IGameResettable
 		rb.interpolation = RigidbodyInterpolation.Interpolate;
 		rb.freezeRotation = true;
 
-		intensityPropID = Shader.PropertyToID(materialPropertyName);
 		ResetEffectIntensity();
 	}
 
@@ -124,10 +132,6 @@ public class PlayerController : MonoBehaviour, IGameResettable
 	private void ResetEffectIntensity()
 	{
 		speedEffectIntensity = 0f;
-		if (speedEffectMaterial != null)
-		{
-			speedEffectMaterial.SetFloat(intensityPropID, 0f);
-		}
 	}
 
 	public void SaveInitialState()
@@ -194,6 +198,10 @@ public class PlayerController : MonoBehaviour, IGameResettable
 			animator.SetBool("IsFalling", value: false);
 			animator.SetBool("IsDancing", value: true);
 		}
+		planarVelocity = Vector3.zero;
+		animationDirectionAngle = 0f;
+		animationDirectionVelocity = 0f;
+		animationDirectionInitialized = false;
 		StopSpeedEffect();
 	}
 
@@ -266,18 +274,15 @@ public class PlayerController : MonoBehaviour, IGameResettable
 
 	private void HandleSpeedEffect()
 	{
-		// 강도는 머티리얼에서 읽지 않고 여기서 들고 있는다 (머티리얼 값은 에셋이라 이전 플레이 값이 남아 있을 수 있다)
-		float target = (currentSpeed >= runThreshold) ? 1f : 0f;
-		speedEffectIntensity = Mathf.Lerp(speedEffectIntensity, target, Time.deltaTime * 5f);
+		// Keep the camera response independent of the removed full-screen speed lines.
+		float target = sprintAction != null && sprintAction.action.ReadValue<float>() > 0f
+			? Mathf.InverseLerp(runThreshold - 1f, sprintSpeed, currentSpeed) : 0f;
+		speedEffectIntensity = Mathf.MoveTowards(speedEffectIntensity, target, Time.deltaTime * (target > speedEffectIntensity ? 1.8f : 2.8f));
 		if (speedEffectIntensity < 0.01f)
 		{
 			speedEffectIntensity = 0f;
 		}
 
-		if (speedEffectMaterial != null)
-		{
-			speedEffectMaterial.SetFloat(intensityPropID, speedEffectIntensity);
-		}
 	}
 
 	private void HandleLook()
@@ -302,18 +307,16 @@ public class PlayerController : MonoBehaviour, IGameResettable
 
 	private void HandleMovement()
 	{
-		float num = ((sprintAction.action.ReadValue<float>() > 0f) ? sprintSpeed : walkSpeed);
-		if (moveInput.magnitude < 0.1f)
-		{
-			num = 0f;
-		}
-		Vector3 vector = base.transform.forward * moveInput.y + base.transform.right * moveInput.x;
-		if (vector.magnitude > 1f)
-		{
-			vector.Normalize();
-		}
-		Vector3 vector2 = vector * num;
-		rb.linearVelocity = new Vector3(vector2.x, rb.linearVelocity.y, vector2.z);
+		Vector2 input = Vector2.ClampMagnitude(moveInput, 1f);
+		if (input.magnitude < 0.1f) input = Vector2.zero;
+		float targetSpeed = sprintAction != null && sprintAction.action.ReadValue<float>() > 0f
+			? sprintSpeed : walkSpeed;
+		Vector3 direction = base.transform.forward * input.y + base.transform.right * input.x;
+		if (direction.sqrMagnitude > 1f) direction.Normalize();
+		Vector3 desired = direction * targetSpeed * input.magnitude;
+		float rate = desired.sqrMagnitude > planarVelocity.sqrMagnitude ? acceleration : deceleration;
+		planarVelocity = Vector3.MoveTowards(planarVelocity, desired, rate * Time.fixedDeltaTime);
+		rb.linearVelocity = new Vector3(planarVelocity.x, rb.linearVelocity.y, planarVelocity.z);
 	}
 
 	private void PerformJump()
@@ -335,13 +338,35 @@ public class PlayerController : MonoBehaviour, IGameResettable
 	{
 		if (!(animator == null))
 		{
-			bool flag = sprintAction.action.ReadValue<float>() > 0f;
-			float target = ((moveInput.magnitude < 0.1f) ? 0f : (flag ? 10f : 5f));
+			// 물리 속도와 애니메이션 속도를 맞춘다. Shift를 누르는 순간 달리기 클립으로
+			// 튀면 실제 몸은 아직 가속 중인데 발만 빨라져 미끄러지거나 떠 보인다.
+			float target = Mathf.Clamp(currentSpeed, 0f, sprintSpeed);
 			animationSpeed = Mathf.SmoothDamp(animationSpeed, target, ref speedSmoothVelocity, speedSmoothTime);
 			animator.SetFloat("Speed", animationSpeed);
 			animator.SetFloat("VerticalVelocity", rb.linearVelocity.y);
-			animator.SetFloat("Move X", moveInput.x, 0.08f, Time.deltaTime);
-			animator.SetFloat("Move Y", moveInput.y, 0.08f, Time.deltaTime);
+
+			// 방향값의 크기는 항상 1로 유지하고 각도만 부드럽게 돌린다.
+			// 기존 방식은 걷기 속도(5)를 달리기 속도(10)로 나눠 0.5만 전달했고,
+			// 반대 방향 전환 때 벡터가 0을 지나며 여러 클립이 엉뚱하게 섞였다.
+			Vector2 animationInput = Vector2.ClampMagnitude(moveInput, 1f);
+			if (animationInput.sqrMagnitude > .01f)
+			{
+				float targetAngle = Mathf.Atan2(animationInput.x, animationInput.y) * Mathf.Rad2Deg;
+				if (!animationDirectionInitialized)
+				{
+					animationDirectionAngle = targetAngle;
+					animationDirectionInitialized = true;
+				}
+				else
+				{
+					animationDirectionAngle = Mathf.SmoothDampAngle(animationDirectionAngle, targetAngle,
+						ref animationDirectionVelocity, directionSmoothTime, Mathf.Infinity, Time.fixedDeltaTime);
+				}
+
+				float radians = animationDirectionAngle * Mathf.Deg2Rad;
+				animator.SetFloat("Move X", Mathf.Sin(radians));
+				animator.SetFloat("Move Y", Mathf.Cos(radians));
+			}
 			animator.SetBool("IsGrounded", isGrounded);
 			animator.SetBool("IsJumping", isJumping);
 			animator.SetBool("IsFalling", isFalling);

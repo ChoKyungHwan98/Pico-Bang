@@ -6079,6 +6079,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1230}
+  - component: {fileID: 1351426813}
   m_Layer: 0
   m_Name: TPS_Cam_Pos
   m_TagString: MainCamera
@@ -9438,6 +9439,7 @@ GameObject:
   - component: {fileID: 1768}
   - component: {fileID: 2464}
   - component: {fileID: 1793}
+  - component: {fileID: 2466}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -17933,7 +17935,7 @@ Transform:
   m_GameObject: {fileID: 203}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.07277692, z: 0, w: 0.99734825}
-  m_LocalPosition: {x: -0.1251164, y: 0.07844073, z: 0.004084607}
+  m_LocalPosition: {x: -0.1251164, y: 0, z: 0.004084607}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -22657,7 +22659,7 @@ Transform:
   m_GameObject: {fileID: 561}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0.07277692, z: 0, w: 0.99734825}
-  m_LocalPosition: {x: -0.1251164, y: 0.07844073, z: 0.004084607}
+  m_LocalPosition: {x: -0.1251164, y: 0, z: 0.004084607}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -30490,7 +30492,7 @@ CapsuleCollider:
   m_Radius: 0.27205068
   m_Height: 1.5784408
   m_Direction: 1
-  m_Center: {x: 0, y: 0.7107796, z: 0}
+  m_Center: {x: 0, y: 0.7777796, z: 0}
 --- !u!137 &1809
 SkinnedMeshRenderer:
   m_ObjectHideFlags: 0
@@ -60603,6 +60605,7 @@ MonoBehaviour:
   chaseSpeed: 11
   investigateSpeed: 9
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -60610,14 +60613,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 140
   zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -60626,30 +60629,57 @@ MonoBehaviour:
   damageCooldown: 1
   stunFreezeTime: 1.5
   stunRecoverTime: 1.5
+  stunLetPlayerPass: 1
+  stunRestoreMaxDelay: 3
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  routeOverlapThreshold: 0.45
+  routeNearDistance: 3
+  convergenceExcludeRadius: 8
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
   interceptTimeout: 12
+  dispersalQueueDistance: 10
+  dispersalQueueSeconds: 1
   roleLockTime: 2
+  waypointReachedDistance: 3
+  finalApproachRefresh: 0.15
+  routeLockDistance: 12
 --- !u!114 &2401
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -61135,8 +61165,9 @@ MonoBehaviour:
   floatMaxHeight: 4.5
   floatDiameter: 1
   portalObject: {fileID: 546}
-  portalSearchRadius: 25
-  portalClearRadius: 3
+  lowTargetHeight: {x: 1.1, y: 1.65}
+  normalTargetHeight: {x: 2.1, y: 2.8}
+  highTargetHeight: {x: 3.4, y: 4.2}
 --- !u!114 &2418
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -61210,11 +61241,12 @@ MonoBehaviour:
   player: {fileID: 0}
   useGlobalNavMesh: 0
   zoneCenter: {fileID: 1021}
-  zoneRadius: 70
+  zoneRadius: 50
   patrolSpeed: 6
   chaseSpeed: 10
   investigateSpeed: 7.5
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -61222,14 +61254,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
   zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -61238,30 +61270,57 @@ MonoBehaviour:
   damageCooldown: 1
   stunFreezeTime: 1.5
   stunRecoverTime: 1.5
+  stunLetPlayerPass: 1
+  stunRestoreMaxDelay: 3
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  routeOverlapThreshold: 0.45
+  routeNearDistance: 3
+  convergenceExcludeRadius: 8
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
   interceptTimeout: 12
+  dispersalQueueDistance: 10
+  dispersalQueueSeconds: 1
   roleLockTime: 2
+  waypointReachedDistance: 3
+  finalApproachRefresh: 0.15
+  routeLockDistance: 12
 --- !u!114 &2421
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -61297,11 +61356,12 @@ MonoBehaviour:
   player: {fileID: 0}
   useGlobalNavMesh: 0
   zoneCenter: {fileID: 937}
-  zoneRadius: 70
+  zoneRadius: 50
   patrolSpeed: 6
   chaseSpeed: 10
   investigateSpeed: 7.5
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -61309,14 +61369,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
   zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -61325,30 +61385,57 @@ MonoBehaviour:
   damageCooldown: 1
   stunFreezeTime: 1.5
   stunRecoverTime: 1.5
+  stunLetPlayerPass: 1
+  stunRestoreMaxDelay: 3
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  routeOverlapThreshold: 0.45
+  routeNearDistance: 3
+  convergenceExcludeRadius: 8
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
   interceptTimeout: 12
+  dispersalQueueDistance: 10
+  dispersalQueueSeconds: 1
   roleLockTime: 2
+  waypointReachedDistance: 3
+  finalApproachRefresh: 0.15
+  routeLockDistance: 12
 --- !u!114 &2423
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -62230,11 +62317,12 @@ MonoBehaviour:
   player: {fileID: 0}
   useGlobalNavMesh: 0
   zoneCenter: {fileID: 1379}
-  zoneRadius: 70
+  zoneRadius: 50
   patrolSpeed: 6
   chaseSpeed: 10
   investigateSpeed: 7.5
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -62242,14 +62330,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
   zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -62258,30 +62346,57 @@ MonoBehaviour:
   damageCooldown: 1
   stunFreezeTime: 1.5
   stunRecoverTime: 1.5
+  stunLetPlayerPass: 1
+  stunRestoreMaxDelay: 3
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  routeOverlapThreshold: 0.45
+  routeNearDistance: 3
+  convergenceExcludeRadius: 8
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
   interceptTimeout: 12
+  dispersalQueueDistance: 10
+  dispersalQueueSeconds: 1
   roleLockTime: 2
+  waypointReachedDistance: 3
+  finalApproachRefresh: 0.15
+  routeLockDistance: 12
 --- !u!114 &2454
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -62317,11 +62432,12 @@ MonoBehaviour:
   player: {fileID: 0}
   useGlobalNavMesh: 0
   zoneCenter: {fileID: 1321}
-  zoneRadius: 70
+  zoneRadius: 50
   patrolSpeed: 7
   chaseSpeed: 10
   investigateSpeed: 7.5
   patrolWaitTime: 0
+  returnSpeed: 16
   patrolAcceleration: 30
   chaseAcceleration: 80
   investigateAcceleration: 50
@@ -62329,14 +62445,14 @@ MonoBehaviour:
   stoppingDistance: 1.2
   sightRange: 40
   fovAngle: 180
-  memoryTime: 4
-  giveUpRange: 40
   obstacleMask:
     serializedVersion: 2
     m_Bits: 128
   hearingRange: 50
   zoneHearingScale: 0.9
   noiseAccuracyFalloff: 0.35
+  noiseReactTime: 0.5
+  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
   showDebugLog: 1
@@ -62345,30 +62461,57 @@ MonoBehaviour:
   damageCooldown: 1
   stunFreezeTime: 1.5
   stunRecoverTime: 1.5
+  stunLetPlayerPass: 1
+  stunRestoreMaxDelay: 3
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  berserkTriggerRange: 12
-  berserkDuration: 3
-  berserkSpeedScale: 1.5
-  berserkAcceleration: 120
-  predictLeadTime: 0.5
-  flankOffset: 4
-  dispatchInterval: 2.5
-  dispatchBlurMin: 6
-  dispatchBlurMax: 14
-  dispatchAngleJitter: 25
-  callMemory: 6
-  dispatchRange: 0
-  dispatchSquadSize: 2
   maxSimultaneousChasers: 2
-  interceptLeadDistance: 15
-  interceptRefreshInterval: 1.5
+  huntTeamSize: 3
+  teamSwapRatio: 0.6
+  routeOverlapThreshold: 0.45
+  routeNearDistance: 3
+  convergenceExcludeRadius: 8
+  cutCandidateMaxDistance: 18
+  cutCandidateMinDistance: 6
+  cutCandidateMergeDistance: 6
+  swapDistanceMargin: 3
+  crossingAvoidRadius: 6
+  hintBlurRadius: 4
+  pursuitHintBlur: 3
+  huntMemory: 8
+  layoutRefreshInterval: 1
+  followDistance: 7
+  followHoldTime: 1
+  pursuitPersistence: 3
+  cornerCheckTime: 4
+  persistenceDecay: 0.7
+  persistenceMin: 2
+  giveUpLookTime: 2
+  huntNearSpeed: 10
+  huntFarSpeed: 14
+  huntNearDistance: 15
+  huntFarDistance: 40
+  detourTimeLimit: 8
+  detourWaypointDistance: 22
+  sideAngleMin: 90
+  scatterAfter: 20
+  scatterTime: 6
+  scatterRejoinBlock: 8
+  handoverDelay: 3
+  teleportUnseenTime: 3
+  teleportMinDistance: 40
+  playerViewAngle: 90
   jumpDuration: 0.5
   jumpHeight: 1.5
   ambushEngageRange: 8
   interceptTimeout: 12
+  dispersalQueueDistance: 10
+  dispersalQueueSeconds: 1
   roleLockTime: 2
+  waypointReachedDistance: 3
+  finalApproachRefresh: 0.15
+  routeLockDistance: 12
 --- !u!114 &2456
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -62433,17 +62576,18 @@ MonoBehaviour:
   sprintSpeed: 11
   jumpForce: 5
   speedSmoothTime: 0.1
+  directionSmoothTime: 0.1
+  acceleration: 48
+  deceleration: 70
   lookSensitivityScale: 1
   verticalSensitivityRatio: 1
-  minXAngle: -60
-  maxXAngle: 60
+  minXAngle: -55
+  maxXAngle: 50
   groundLayer:
     serializedVersion: 2
     m_Bits: 128
   rayLength: 0.2
   rayOriginOffset: {x: 0, y: 0.1, z: 0}
-  speedEffectMaterial: {fileID: 2100000, guid: b6f2d1e5c8a34fad9e4b7c2a1f3d5e8b, type: 2}
-  materialPropertyName: _FullscreenIntensity
   runThreshold: 8
   isGrounded: 0
   isJumping: 0
@@ -62575,6 +62719,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0ef00c526d2b00a45d4cfca978430638, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  IsUnlocked: 1
 --- !u!114 &2464
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -62629,6 +62774,29 @@ OcclusionCullingSettings:
     backfaceThreshold: 100
   m_SceneGUID: 00000000000000000000000000000000
   m_OcclusionCullingData: {fileID: 0}
+--- !u!114 &2466
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 558}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 956a0c3c8351a2f49a0fcb4d096451de, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RearViewMirror
+  panelSize: {x: 430, y: 220}
+  triggerDistance: 17
+  resetDistance: 22
+  showDuration: 1.25
+  replayCooldown: 2.8
+  wideFieldOfView: 58
+  zoomFieldOfView: 31
+  idleCameraDistance: 7.5
+  idleCameraHeight: 2.1
+  threatIntroTime: 0.28
+  threatOutroTime: 0.24
 --- !u!1 &74782471
 GameObject:
   m_ObjectHideFlags: 0
@@ -66339,6 +66507,33 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1336703230}
   m_CullTransparentMesh: 1
+--- !u!114 &1351426813
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 358}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 94efbd4770384a90b85783f132314a33, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ShoulderCameraRig
+  normalDistance: 2.35
+  sprintExtraDistance: 0.35
+  downwardDistanceBonus: 0.45
+  maxDownwardBoomPitch: 22
+  sprintFieldOfView: 66
+  squeezedFieldOfView: 72
+  distanceSmoothTime: 0.12
+  cameraRadius: 0.28
+  wallBuffer: 0.12
+  shoulderEscape: 0.5
+  verticalEscape: 0.32
+  hidePlayerDistance: 0.62
+  collisionMask:
+    serializedVersion: 2
+    m_Bits: 1281
 --- !u!1 &1361371819
 GameObject:
   m_ObjectHideFlags: 0
@@ -68619,11 +68814,13 @@ MonoBehaviour:
   - {fileID: 861126078}
   - {fileID: 1886073539}
   - {fileID: 1618803018}
-  baseGap: 18
-  kickGap: 34
+  baseGap: 14
+  kickGap: 27
   recoverSpeed: 9
   idleColor: {r: 1, g: 1, b: 1, a: 0.9}
   hitColor: {r: 1, g: 0.55, b: 0.1, a: 1}
+  targetColor: {r: 0.45, g: 1, b: 0.92, a: 1}
+  aimRange: 100
   hitFlashTime: 0.18
 --- !u!114 &2041413169
 MonoBehaviour:
