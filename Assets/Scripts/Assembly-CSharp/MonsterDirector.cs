@@ -91,13 +91,14 @@ public class MonsterDirector : MonoBehaviour
     public int DebugFollowBreaks => followBreaks;
     public int DebugHandovers => handovers;
     public string DebugLayoutSummary => summary;
-    public string DebugOrderLabel(MonsterAI m) => preparations.ContainsKey(m) ? "통로 준비" : !team.Contains(m) ? "" : m == pressure ? "압박" : "협공";
+    public string DebugOrderLabel(MonsterAI m) =>
+        m == null ? "" : m.CurrentState == MonsterAI.State.Chase ? "추적" :
+        (m.IsDispersalDetour || (team.Contains(m) && m.CurrentState == MonsterAI.State.Intercept)) ? "우회" : "";
     public string DebugPreparationStatus(MonsterAI m) => preparationProgress.TryGetValue(m, out var p) ? p.status ?? "moving" : "";
     public string DebugRouteLabel(MonsterAI m)
     {
-        if (preparations.ContainsKey(m)) return "통로 준비";
         if (!routes.TryGetValue(m, out var r)) return "";
-        return (r.directChaser ? "추격" : r.detour ? "우회 협공" : "별도 진입") +
+        return (r.directChaser ? "추적" : "우회") +
                 (r.directChaser ? "" : " ETA~" + r.eta.ToString("F1")) + " ov" + r.overlap.ToString("F2");
     }
     private MonsterAI Settings
@@ -117,6 +118,12 @@ public class MonsterDirector : MonoBehaviour
     public float GiveUpLookTime => Settings != null ? Mathf.Max(0, Settings.giveUpLookTime) : 2f;
     private float FarSpeed => Settings != null ? Mathf.Max(TrackingSpeedCap, Settings.huntFarSpeed) : 14f;
     private float Memory => Settings != null ? Mathf.Max(1, Settings.huntMemory) : 8f;
+    private float QueueDistance => Settings != null ? Mathf.Max(1f, Settings.dispersalQueueDistance) : 10f;
+    private float QueueSeconds => Settings != null ? Mathf.Max(0f, Settings.dispersalQueueSeconds) : 1f;
+    // 사냥 팀 마릿수(추격 1 + 우회) — 인스펙터 huntTeamSize
+    private int TeamSize => Settings != null ? Mathf.Max(1, Settings.huntTeamSize) : 3;
+    // 추격자 뒤 줄에 들어온 시각 — 줄에서 빠지면 지운다
+    private readonly Dictionary<MonsterAI, float> queueSince = new Dictionary<MonsterAI, float>();
     private float Refresh => Settings != null ? Mathf.Clamp(Settings.layoutRefreshInterval, .3f, 1f) : .75f;
     private float EstimateArrival(MonsterRoutePlanner.Option route) => MonsterRoutePlanner.EstimateTravelTime(
         route, TrackingSpeedCap, FarSpeed, Settings != null ? Settings.huntNearDistance : 15f,
@@ -271,7 +278,11 @@ public class MonsterDirector : MonoBehaviour
     }
     public bool RequestChase(MonsterAI m)
     {
-        if (m == null || !m.CanReceiveTactics || !hunting) return false;
+        if (m == null || !m.CanReceiveTactics) return false;
+        // 발견하면 추적한다(기획 2026-09-24): 우회 끝에서 찾은 개체, 팀 밖에서 직접 본 개체(구역에 들어온 플레이어).
+        // 추격자는 여러 마리일 수 있고, 사냥 팀이 3마리를 넘으면 EnforceTeamCap이 가장 먼 개체를 복귀시킨다
+        if (m.IsDispersalDetour || m.IsSightChaseCandidate) return true;
+        if (!hunting) return false;
         if (pressure == null && Time.time >= nextPlan) Coordinate();
         return pressure == m;
     }
@@ -303,7 +314,7 @@ public class MonsterDirector : MonoBehaviour
             eta = EstimateArrival(approach), colorIndex = routes[m].colorIndex };
         orders[m] = knownPosition; waypoints.Remove(m);
     }
-    private bool Eligible(MonsterAI m) => m != null && m.CanReceiveTactics && !m.IsGivingUp &&
+    private bool Eligible(MonsterAI m) => m != null && m.CanReceiveTactics && !m.IsGivingUp && !m.IsDispersing &&
         (!blockedUntil.TryGetValue(m, out float until) || Time.time >= until);
 
     private void Update()
@@ -313,8 +324,9 @@ public class MonsterDirector : MonoBehaviour
         if (Time.time >= nextSafety)
         {
             nextSafety = Time.time + .2f;
-            CheckFollowing();
             CheckPreparationProgress();
+            CheckDispersal();
+            EnforceTeamCap();
         }
         if (Time.time >= nextZoneSwap) { nextZoneSwap = Time.time + 2f; TrySwapReturnZones(); }
         if (!hunting) return;
@@ -356,6 +368,8 @@ public class MonsterDirector : MonoBehaviour
                 direct.Add(pressureOption);
             }
             // Supports reserve connected exits/cutoffs. They never use another shortest path to the same evidence point.
+            // 눈으로 보고 쫓는 개체는 계획이 차단 임무로 빼지 않는다(추격자 여러 마리 허용)
+            if (m.CurrentState == MonsterAI.State.Chase) continue;
             var available = planner.BuildCutoffs(m, knownPosition, StrategicDirection, FarSpeed * maxSeconds, RetainedMissionGoal(m));
             options.AddRange(available);
             foreach (var o in available)
@@ -489,93 +503,142 @@ public class MonsterDirector : MonoBehaviour
             }
         }
         PlanPreparations(selected);
-        summary = $"압박 1 + 동시 접근 {selected.Count - 1} · 통로 준비 {preparations.Count}";
+        summary = $"추적 1 · 우회 {selected.Count - 1}";
     }
 
+    /// <summary>
+    /// 대기(통로 준비)는 쓰지 않는다(기획 2026-09-24). 사냥 팀은 추적 1 + 우회뿐이다.
+    /// 팀에 뽑히지 않은 개체는 끌어오지 않고 자기 구역에서 순찰한다 — 이미 우회 중이던 개체는 구역으로 돌아간다.
+    /// </summary>
     private void PlanPreparations(List<MonsterRoutePlanner.Option> selected)
     {
-        var previous = new Dictionary<MonsterAI, RouteInfo>(preparations);
-        preparations.Clear();
-        var occupied = new List<MonsterRoutePlanner.Option>(selected);
-        var remaining = new List<MonsterAI>();
         foreach (var m in MonsterAI.activeMonsters)
-            if (m != null && !team.Contains(m) && m.CanReceiveTactics && !m.IsGivingUp) remaining.Add(m);
-        remaining.Sort((a,b) => Vector3.SqrMagnitude(a.transform.position-knownPosition).CompareTo(
-            Vector3.SqrMagnitude(b.transform.position-knownPosition)));
-        Vector3 preparationFocus = knownPosition;
-        Vector3 strategicDirection = StrategicDirection;
-        if (strategicDirection.sqrMagnitude > .1f && NavMesh.SamplePosition(knownPosition + strategicDirection * 12f,
-            out var focusHit, 8f, NavMesh.AllAreas)) preparationFocus = focusHit.position;
-        // Expand only one stale preparation per plan, oldest first. Movement, not replanning, resets the clock.
-        MonsterAI retry = null;
-        float oldest = float.PositiveInfinity;
-        foreach (var m in remaining)
-            if (preparationProgress.TryGetValue(m, out var p) && Time.time - p.progressedAt >= 2.5f &&
-                Time.time >= p.retryAt && !m.HasCloseVisibleEncounter && Eligible(m) && p.progressedAt < oldest)
-            { retry = m; oldest = p.progressedAt; }
-        foreach (var m in remaining)
         {
-            previous.TryGetValue(m, out var old);
-            if (!preparationProgress.TryGetValue(m, out var progress))
+            if (m == null || team.Contains(m) || m.IsInStun || m.IsDispersing || m.IsTraversingLink) continue;
+            if (m.CurrentState != MonsterAI.State.Intercept && m.CurrentState != MonsterAI.State.Prepare) continue;
+            PlaytestRecorder.Record("team_release_home", m.name, m.transform.position, "not_selected");
+            m.CommandDispersalReturn();
+        }
+        preparations.Clear();
+        preparationProgress.Clear();
+    }
+
+    /// <summary>
+    /// 해산(기획 2026-09-24): 추격자 뒤로 차단·대기 몬스터가 QueueDistance 안에서 QueueSeconds 동안 줄지어 따라가면
+    /// 해산 명령을 1회 내린다. 추격자는 그대로 추격하고, 줄에 있던 차단·대기는 각자 지정 위치로 간다.
+    /// "줄" = 플레이어 기준 추격자와 같은 쪽, 추격자보다 뒤에서, 추격자 또는 줄의 다른 개체와 QueueDistance 안으로 이어진 개체.
+    /// </summary>
+    private void CheckDispersal()
+    {
+        MonsterAI chaser = pressure;
+        if (!hunting || chaser == null || chaser.CurrentState != MonsterAI.State.Chase || chaser.IsInStun)
+        { queueSince.Clear(); return; }
+        Vector3 target = knownPosition;
+        Vector3 toChaser = Vector3.ProjectOnPlane(chaser.transform.position - target, Vector3.up);
+        var pool = new List<MonsterAI>();
+        foreach (var m in MonsterAI.activeMonsters)
+            if (m != null && m != chaser && !m.IsInStun && !m.IsTraversingLink && !m.IsDispersing &&
+                (m.CurrentState == MonsterAI.State.Intercept || m.CurrentState == MonsterAI.State.Prepare)) pool.Add(m);
+        var line = new List<MonsterAI> { chaser };
+        bool grew = true;
+        while (grew)
+        {
+            grew = false;
+            foreach (var m in pool)
             {
-                progress = new PreparationProgress { position = m.transform.position, progressedAt = Time.time };
-                preparationProgress[m] = progress;
-            }
-            bool expanded = m == retry;
-            bool queueCooldown = blockedUntil.TryGetValue(m, out float until) && Time.time < until;
-            MonsterRoutePlanner.Option option = null;
-            // Preserve a valid future corridor across repeated shots. Reassign only after the player passes it,
-            // it disconnects, or it conflicts with a currently active corridor.
-            if (old != null && !m.HasCloseVisibleEncounter && !queueCooldown)
-            {
-                Vector3 towardGoal = Vector3.ProjectOnPlane(old.goal - knownPosition, Vector3.up);
-                bool stillAhead = strategicDirection.sqrMagnitude < .1f || towardGoal.sqrMagnitude < 1f ||
-                    Vector3.Dot(towardGoal.normalized, strategicDirection) >= CutoffPassedDot;
-                var retainedPath = stillAhead && Vector3.Distance(old.goal, knownPosition) >= CutoffReachedDistance &&
-                    Vector3.Distance(old.goal, knownPosition) <= 55f ? planner.Path(m, m.transform.position, old.goal) : null;
-                if (retainedPath != null)
+                if (line.Contains(m)) continue;
+                Vector3 toM = Vector3.ProjectOnPlane(m.transform.position - target, Vector3.up);
+                bool sameSide = toChaser.sqrMagnitude < .01f || toM.sqrMagnitude < .01f ||
+                    Vector3.Dot(toM.normalized, toChaser.normalized) > .7f;
+                bool behind = toM.magnitude >= toChaser.magnitude - 1f;
+                if (!sameSide || !behind) continue;
+                foreach (var l in line)
                 {
-                    var retained = MonsterRoutePlanner.Make(m, retainedPath, old.goal, false, true);
-                    bool conflict = false;
-                    foreach (var other in occupied)
-                        if (Vector3.Distance(retained.goal, other.goal) < 7f || MonsterRoutePlanner.Conflict(retained, other, out _))
-                        { conflict = true; break; }
-                    if (!conflict) option = retained;
+                    if (Vector3.Distance(m.transform.position, l.transform.position) <= QueueDistance)
+                    { line.Add(m); grew = true; break; }
                 }
             }
-            // A visible close encounter must face the player, never turn away to a staging point.
-            if (option == null && !m.HasCloseVisibleEncounter && !queueCooldown)
-                option = planner.Prepare(m, preparationFocus, occupied, old != null ? old.goal : (Vector3?)null, expanded);
-            progress.noRoute = option == null;
-            if (expanded)
-            {
-                progress.retryAt = Time.time + 2.5f;
-                PlaytestRecorder.Record("preparation_retry", m.name, m.transform.position,
-                    option != null ? "independent_route_found" : "no_safe_alternative",
-                    option != null ? option.goal : m.transform.position);
-                // If the wider search fails, keep a still-valid normal route rather than interrupting it.
-                if (option == null) option = planner.Prepare(m, preparationFocus, occupied, old != null ? old.goal : (Vector3?)null);
-                progress.noRoute = option == null;
-            }
-            if (option == null)
-            {
-                // No independent route exists. Wait off the chase rather than queue behind it.
-                var here = m.transform.position;
-                option = MonsterRoutePlanner.Make(m, new[] { here, here }, here, false, false);
-            }
-            var route = new RouteInfo { corners = option.corners, goal = option.goal, waypoint = option.goal, colorIndex = 3 };
-            preparations[m] = route; orders[m] = option.goal;
-            occupied.Add(option);
-            m.SetHuntSpeed(FarSpeed);
-            m.CommandPreparation(option.corners);
-            if (old == null || Vector3.Distance(old.goal, option.goal) > 1f)
-            {
-                PlaytestRecorder.Record("approach_preparation", m.name, m.transform.position,
-                    option.length < .2f ? "no_separate_route_hold" : "walk_to_connected_approach", option.goal, option.corners);
-            }
         }
-        foreach (var m in previous.Keys)
-            if (!preparations.ContainsKey(m)) { preparationProgress.Remove(m); }
+        foreach (var m in new List<MonsterAI>(queueSince.Keys)) if (!line.Contains(m)) queueSince.Remove(m);
+        bool fire = false;
+        for (int i = 1; i < line.Count; i++)
+        {
+            if (!queueSince.ContainsKey(line[i])) queueSince[line[i]] = Time.time;
+            if (Time.time - queueSince[line[i]] >= QueueSeconds) fire = true;
+        }
+        if (!fire) return;
+        // 해산 명령 1회: 줄에 있던 차단·대기 전원이 지정 위치로. 서로 같은 곳으로 가지 않게 이미 준 경로를 피한다
+        var occupied = new List<MonsterRoutePlanner.Option>();
+        int sent = 0, home = 0;
+        for (int i = 1; i < line.Count; i++)
+        {
+            if (SendDispersalDetour(line[i], chaser, occupied)) sent++; else home++;
+        }
+        queueSince.Clear();
+        PlaytestRecorder.Record("dispersal_command", chaser.name, chaser.transform.position,
+            "queue=" + (line.Count - 1) + ";moved=" + sent + ";no_route_home=" + home);
+    }
+
+    /// <summary>
+    /// 사냥 팀 상한(기획 2026-09-24): 팀 밖 몬스터가 직접 발견해 추격에 들어오면 인원이 넘칠 수 있다.
+    /// 넘치면 플레이어에게 가장 가까운 추격자는 반드시 남기고, 나머지 중 가까운 순으로 채운 뒤 먼 개체를 자기 구역으로 복귀시킨다.
+    /// </summary>
+    private void EnforceTeamCap()
+    {
+        if (!hunting) return;
+        var active = new List<MonsterAI>();
+        foreach (var m in MonsterAI.activeMonsters)
+            if (m != null && !m.IsInStun && !m.IsTraversingLink &&
+                (m.CurrentState == MonsterAI.State.Chase || m.CurrentState == MonsterAI.State.Intercept || m.CurrentState == MonsterAI.State.Prepare))
+                active.Add(m);
+        if (active.Count <= TeamSize) return;
+        Vector3 target = knownPosition;
+        active.Sort((a, b) => Vector3.SqrMagnitude(a.transform.position - target).CompareTo(Vector3.SqrMagnitude(b.transform.position - target)));
+        var keep = new List<MonsterAI>();
+        var nearestChaser = active.Find(x => x.CurrentState == MonsterAI.State.Chase);
+        if (nearestChaser != null) keep.Add(nearestChaser);
+        foreach (var m in active) { if (keep.Count >= TeamSize) break; if (!keep.Contains(m)) keep.Add(m); }
+        foreach (var m in active)
+        {
+            if (keep.Contains(m)) continue;
+            if (m == pressure) pressure = null;
+            PlaytestRecorder.Record("team_cap_return", m.name, m.transform.position, "over_team_of_" + TeamSize);
+            m.CommandDispersalReturn();
+        }
+    }
+
+    /// <summary>
+    /// 지정 위치: 추격자의 길과 겹치지 않고, 같은 명령으로 흩어지는 다른 개체의 길·목적지와도 겹치지 않는 가장 빨리 닿는 차단 지점.
+    /// 그런 곳이 없으면 이동할 곳이 없으므로 곧바로 해산(복귀)한다. 이동 명령을 줬으면 true.
+    /// </summary>
+    private bool SendDispersalDetour(MonsterAI m, MonsterAI chaser, List<MonsterRoutePlanner.Option> occupied)
+    {
+        float maxSeconds = Settings != null ? Mathf.Clamp(Settings.detourTimeLimit, 3f, 12f) : 8f;
+        if (planner.AnchorCount == 0) planner.Rebuild();
+        var chaserPath = planner.Path(chaser, chaser.transform.position, knownPosition);
+        var chaserOption = chaserPath != null ? MonsterRoutePlanner.Make(chaser, chaserPath, knownPosition, false, false) : null;
+        MonsterRoutePlanner.Option best = null;
+        foreach (var o in planner.BuildCutoffs(m, knownPosition, StrategicDirection, FarSpeed * maxSeconds, null))
+        {
+            o.eta = EstimateArrival(o);
+            if (o.eta > maxSeconds) continue;
+            if (chaserOption != null && MonsterRoutePlanner.Conflict(o, chaserOption, out _)) continue;
+            bool clash = false;
+            foreach (var other in occupied)
+                if (Vector3.Distance(o.goal, other.goal) < 8f || MonsterRoutePlanner.Conflict(o, other, out _)) { clash = true; break; }
+            if (clash) continue;
+            if (best == null || o.eta < best.eta) best = o;
+        }
+        if (best == null)
+        {
+            PlaytestRecorder.Record("dispersal", m.name, m.transform.position, "no_route_return_home");
+            m.CommandDispersalReturn();
+            return false;
+        }
+        occupied.Add(best);
+        m.CommandDispersalDetour(best.corners, best.waypoint, best.detour);
+        PlaytestRecorder.Record("dispersal", m.name, m.transform.position, "move_to_assigned", best.goal, best.corners);
+        return true;
     }
 
     private void CheckPreparationProgress()

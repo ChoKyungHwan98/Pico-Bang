@@ -298,6 +298,13 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("차단 명령이 이 시간 동안 갱신되지 않으면 포기하고 복귀한다(초)")]
 	public float interceptTimeout = 12f;
 
+	[Header("9. 해산 (기획 2026-09-24)")]
+	[Tooltip("전역 몬스터 값만 사용. 추격자 뒤에서 차단·대기 몬스터가 이 거리(m) 안으로 줄지어 따라가면 '줄줄이'로 본다")]
+	public float dispersalQueueDistance = 10f;
+
+	[Tooltip("전역 몬스터 값만 사용. 줄줄이가 이 시간(초) 이어지면 감독이 해산 명령을 1회 내린다")]
+	public float dispersalQueueSeconds = 1f;
+
 	[Tooltip("추격↔차단 역할이 바뀐 직후 다시 바뀌지 않는 시간(초)")]
 	[HideInInspector] // Legacy serialized value; not used by joint route planning.
 	public float roleLockTime = 2f;
@@ -349,6 +356,22 @@ public class MonsterAI : MonoBehaviour
 	private Transform originalZoneCenter;
 	private float originalZoneRadius;
 	public bool IsGuardingReturnEncounter { get; private set; }
+
+	// 해산: 추격자가 곁에 있어 우회를 받은 개체, 우회에 실패해 집으로 가는 개체
+	private bool dispersalDetour;
+	private bool returningFromDispersal;
+	public bool IsDispersing => dispersalDetour || returningFromDispersal;
+	public bool IsDispersalDetour => dispersalDetour && currentState == State.Intercept;
+	// 우회 끝 판정 중(도착해서 찾으면 추적) — 감독이 추격을 허가한다
+	private bool finishingDetour;
+	/// <summary>
+	/// 팀 밖에서 직접 본 개체(순찰·수색·일반 복귀 중)이거나 우회 끝에서 찾은 개체 — 발견하면 추격한다(기획 2026-09-24).
+	/// 해산·인원 초과로 집에 가는 중인 개체는 집에 닿을 때까지 제외 — 추격↔복귀가 매 프레임 뒤집히지 않게.
+	/// </summary>
+	public bool IsSightChaseCandidate => finishingDetour ||
+		currentState == State.Patrol || currentState == State.Investigate ||
+		(currentState == State.Return && !returningFromDispersal);
+	public bool IsRoleLocked => Time.time < roleLockUntil;
 	public bool HasCloseVisibleEncounter => !isStunned && !isJumping && player != null &&
 		Vector3.Distance(transform.position, player.position) <= 8f && CheckSight();
 
@@ -816,6 +839,14 @@ public class MonsterAI : MonoBehaviour
 		else { UpdateInterceptDestination(); }
 	}
 
+	/// <summary>해산 명령(기획 2026-09-24): 지정 위치로 이동한다. 도착해서 찾으면 추적, 못 찾으면 해산(복귀)한다.</summary>
+	public void CommandDispersalDetour(Vector3[] corners, Vector3 via, bool detour)
+	{
+		returningFromDispersal = false;
+		CommandTacticalRoute(corners, via, detour);
+		if (currentState == State.Intercept) dispersalDetour = true;
+	}
+
 	public bool TryGetTacticalWaypoint(out Vector3 point)
 	{
 		point = tacticalVia;
@@ -846,15 +877,11 @@ public class MonsterAI : MonoBehaviour
 		if (hasWaypoint && Vector3.Distance(transform.position, interceptWaypoint) < 1.25f) UpdateInterceptDestination();
 		// remainingDistance ends at the current corner, not the final preparation point.
 		// Stopping within the arrival margin can strand us before a wall corner can be rounded.
+		// 우회 2마리(기획 2026-09-24): 지정 위치에 닿으면 서서 기다리지 않는다 — 찾으면 추적, 못 찾으면 해산(복귀)
 		if (!hasWaypoint && HasArrived())
 		{
-			agent.isStopped = true;
-			if (canSee)
-			{
-				Vector3 direction = player.position - transform.position; direction.y = 0;
-				if (direction.sqrMagnitude > .01f) transform.rotation = Quaternion.RotateTowards(
-					transform.rotation, Quaternion.LookRotation(direction), angularSpeed * Time.deltaTime);
-			}
+			FinishDispersalDetour(canSee);
+			return;
 		}
 		if (canSee && HasCloseVisibleEncounter && Time.time >= nextRouteFailureReport)
 		{
@@ -1247,6 +1274,7 @@ public class MonsterAI : MonoBehaviour
 	/// </summary>
 	private void ProcessIntercept(bool canSee)
 	{
+		if (dispersalDetour) { ProcessDispersalDetour(canSee); return; }
 		if (canSee && !hasWaypoint && Time.time >= nextRouteFailureReport)
 		{
 			nextRouteFailureReport = Time.time + .25f;
@@ -1271,12 +1299,50 @@ public class MonsterAI : MonoBehaviour
 		{
 			UpdateInterceptDestination();
 		}
-		// At a stale endpoint, request a new joint assignment; do not acquire an unchecked shortest path.
-		if (!hasWaypoint && HasArrived() && Time.time >= nextRouteFailureReport)
+		// 우회 2마리(기획 2026-09-24): 지정 위치에 닿으면 찾으면 추적, 못 찾으면 해산(복귀)
+		if (!hasWaypoint && HasArrived())
 		{
-			nextRouteFailureReport = Time.time + .5f;
-			MonsterDirector.Instance?.InvalidateRoute(this);
+			FinishDispersalDetour(canSee);
 		}
+	}
+
+	/// <summary>
+	/// 해산 우회(기획 2026-09-24): 우회 경로 끝(또는 제한 시간 초과)에서
+	/// 눈으로 보면 추적, 못 보면 최대한 빨리 복귀한다.
+	/// </summary>
+	private void ProcessDispersalDetour(bool canSee)
+	{
+		if (tacticalCorners == null) { FinishDispersalDetour(false); return; }
+		interceptTimer -= Time.deltaTime;
+		if (hasWaypoint && Vector3.Distance(transform.position, interceptWaypoint) < 1.25f)
+		{
+			UpdateInterceptDestination();
+		}
+		bool arrived = !hasWaypoint && HasArrived();
+		if (!arrived && interceptTimer > 0f) return;
+		FinishDispersalDetour(canSee);
+	}
+
+	/// <summary>우회 끝(해산 이동·우회 2마리 공통): 눈으로 보면 추적, 못 찾으면 해산(복귀).</summary>
+	private void FinishDispersalDetour(bool canSee)
+	{
+		finishingDetour = true;
+		bool chased = canSee && TryStartChase();
+		finishingDetour = false;
+		if (chased)
+		{
+			PlaytestRecorder.Record("dispersal_found", name, transform.position, "chase");
+			return;
+		}
+		PlaytestRecorder.Record("dispersal_return_home", name, transform.position, "not_found");
+		CommandDispersalReturn();
+	}
+
+	/// <summary>해산 복귀: 최대한 빨리 집으로. 집에 닿아 순찰로 돌아갈 때까지 감독이 다시 끌어들이지 않는다.</summary>
+	public void CommandDispersalReturn()
+	{
+		CommandGoHome(0f);
+		if (currentState == State.Return) returningFromDispersal = true;
 	}
 
 	private void ProcessReturn(bool canSee)
@@ -1286,6 +1352,8 @@ public class MonsterAI : MonoBehaviour
 		{
 			MonsterDirector.Instance?.ReportReturnEncounter(this);
 			if (currentState != State.Return) return;
+			// 발견하면 추격한다(기획 2026-09-24) — 3마리를 넘으면 감독이 가장 먼 개체를 복귀시킨다
+			if (TryStartChase()) return;
 			// Keep the encounter dangerous without becoming a second follower in the same corridor.
 			IsGuardingReturnEncounter = true;
 			agent.isStopped = true;
@@ -1361,6 +1429,7 @@ public class MonsterAI : MonoBehaviour
 		{
 			tacticalCorners = null;
 			tacticalHasVia = hasWaypoint = finalApproach = false;
+			dispersalDetour = false;
 			agent.stoppingDistance = stoppingDistance;
 		}
 		if (newState != State.Investigate)
@@ -1370,6 +1439,10 @@ public class MonsterAI : MonoBehaviour
 		if (newState != State.Chase)
 		{
 			lostSight = false;
+		}
+		if (newState != State.Return)
+		{
+			returningFromDispersal = false;
 		}
 		switch (newState)
 		{
