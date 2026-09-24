@@ -449,7 +449,17 @@ public class MonsterDirector : MonoBehaviour
         float SupportScore(MonsterRoutePlanner.Option o) =>
             10f - o.eta + Mathf.Clamp(o.targetEta - o.eta, -2f, 2f) +
             (o.retained ? 5f : team.Contains(o.monster) ? 1.5f : 0f);
-        int supportLimit = Settings != null ? Mathf.Clamp(Settings.huntTeamSize - 1, 0, 2) : 2;
+        // 우회 자리 = 팀 인원 - 추적 1 - 이미 사냥 중인 다른 개체(두 번째 추격자, 해산·재시도 우회).
+        // 이걸 빼지 않으면 계획이 뽑은 개체를 EnforceTeamCap이 곧바로 돌려보내고, 다음 계획이 또 뽑는다(1초 간격 반복)
+        int alreadyHunting = 0, chasing = 0;
+        foreach (var m in MonsterAI.activeMonsters)
+        {
+            if (m == null || m.IsInStun) continue;
+            if (m.CurrentState == MonsterAI.State.Chase) chasing++;
+            else if (m.IsDispersalDetour) alreadyHunting++;
+        }
+        alreadyHunting += Mathf.Max(0, chasing - 1);
+        int supportLimit = Mathf.Clamp(TeamSize - 1 - alreadyHunting, 0, 2);
         // Pressure continuity is a constraint, not a small bonus that extra support slots can outweigh.
         MonsterRoutePlanner.Option incumbent = direct.Find(p => p.monster == pressure);
         bool keepPressure = incumbent != null && pressure.CurrentState == MonsterAI.State.Chase &&
@@ -670,22 +680,7 @@ public class MonsterDirector : MonoBehaviour
     /// </summary>
     private bool SendDispersalDetour(MonsterAI m, MonsterAI chaser, List<MonsterRoutePlanner.Option> occupied, string reason)
     {
-        float maxSeconds = Settings != null ? Mathf.Clamp(Settings.detourTimeLimit, 3f, 12f) : 8f;
-        if (planner.AnchorCount == 0) planner.Rebuild();
-        var chaserPath = planner.Path(chaser, chaser.transform.position, knownPosition);
-        var chaserOption = chaserPath != null ? MonsterRoutePlanner.Make(chaser, chaserPath, knownPosition, false, false) : null;
-        MonsterRoutePlanner.Option best = null;
-        foreach (var o in planner.BuildCutoffs(m, knownPosition, StrategicDirection, FarSpeed * maxSeconds, null))
-        {
-            o.eta = EstimateArrival(o);
-            if (o.eta > maxSeconds) continue;
-            if (chaserOption != null && MonsterRoutePlanner.Conflict(o, chaserOption, out _)) continue;
-            bool clash = false;
-            foreach (var other in occupied)
-                if (Vector3.Distance(o.goal, other.goal) < 8f || MonsterRoutePlanner.Conflict(o, other, out _)) { clash = true; break; }
-            if (clash) continue;
-            if (best == null || o.eta < best.eta) best = o;
-        }
+        var best = FindDetour(m, chaser, occupied, false);
         if (best == null)
         {
             PlaytestRecorder.Record("dispersal", m.name, m.transform.position, "no_route_return_home");
@@ -707,6 +702,55 @@ public class MonsterDirector : MonoBehaviour
         dispersedThisHunt.Add(m);
         PlaytestRecorder.Record("dispersal", m.name, m.transform.position, "move_to_assigned", best.goal, best.corners);
         Announce(m, reason + " → 다른 길로 우회 (약 " + best.eta.ToString("F0") + "초)");
+        return true;
+    }
+
+    /// <summary>
+    /// 가장 빨리 닿는 차단 지점: 추격자의 길, occupied의 길·목적지와 겹치지 않는 곳. 없으면 null.
+    /// retry면 방금 확인한 곳(지금 위치 8m 안)과 다른 몬스터가 가는 길목(8m 안)도 뺀다.
+    /// </summary>
+    private MonsterRoutePlanner.Option FindDetour(MonsterAI m, MonsterAI chaser, List<MonsterRoutePlanner.Option> occupied, bool retry)
+    {
+        float maxSeconds = Settings != null ? Mathf.Clamp(Settings.detourTimeLimit, 3f, 12f) : 8f;
+        if (planner.AnchorCount == 0) planner.Rebuild();
+        var chaserPath = chaser != null ? planner.Path(chaser, chaser.transform.position, knownPosition) : null;
+        var chaserOption = chaserPath != null ? MonsterRoutePlanner.Make(chaser, chaserPath, knownPosition, false, false) : null;
+        MonsterRoutePlanner.Option best = null;
+        foreach (var o in planner.BuildCutoffs(m, knownPosition, StrategicDirection, FarSpeed * maxSeconds, null))
+        {
+            o.eta = EstimateArrival(o);
+            if (o.eta > maxSeconds) continue;
+            if (chaserOption != null && MonsterRoutePlanner.Conflict(o, chaserOption, out _)) continue;
+            bool clash = false;
+            foreach (var other in occupied)
+                if (Vector3.Distance(o.goal, other.goal) < 8f || MonsterRoutePlanner.Conflict(o, other, out _)) { clash = true; break; }
+            if (retry)
+            {
+                if (Vector3.Distance(o.goal, m.transform.position) < 8f) clash = true;
+                foreach (var pair in routes)
+                    if (pair.Key != null && pair.Key != m && Vector3.Distance(o.goal, pair.Value.goal) < 8f) { clash = true; break; }
+            }
+            if (clash) continue;
+            if (best == null || o.eta < best.eta) best = o;
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// 우회 재시도(기획 2026-09-24): 우회 끝에서 플레이어를 못 찾으면 복귀하기 전에 새 길목을 한 번 더 준다.
+    /// 줄 수 있으면 true, 사냥이 끝났거나 새 길목이 없으면 false(호출한 쪽이 복귀).
+    /// </summary>
+    public bool RetryDetour(MonsterAI m)
+    {
+        if (!hunting || m == null || !m.CanReceiveTactics) return false;
+        var chaser = pressure != null && pressure != m && pressure.CurrentState == MonsterAI.State.Chase ? pressure : null;
+        var best = FindDetour(m, chaser, new List<MonsterRoutePlanner.Option>(), true);
+        if (best == null) return false;
+        m.CommandDispersalDetour(best.corners, best.waypoint, best.detour);
+        if (!m.IsDispersalDetour) return false;
+        dispersedThisHunt.Add(m);
+        PlaytestRecorder.Record("detour_retry", m.name, m.transform.position, "move_to_assigned", best.goal, best.corners);
+        Announce(m, "우회 끝에 없음 → 다른 길목으로 한 번 더 (약 " + best.eta.ToString("F0") + "초)");
         return true;
     }
 

@@ -264,6 +264,8 @@ public class MonsterAI : MonoBehaviour
 		(currentState == State.Intercept || currentState == State.Prepare) ? tacticalCorners : null;
 	// 우회 끝 판정 중(도착해서 찾으면 추적) — 감독이 추격을 허가한다
 	private bool finishingDetour;
+	// 이번 우회에서 새 길목을 이미 한 번 더 받았다 — 우회(Intercept·Prepare)를 벗어나면 풀린다
+	private bool detourRetried;
 	/// <summary>
 	/// 팀 밖에서 직접 본 개체(순찰·수색·일반 복귀 중)이거나 우회 끝에서 찾은 개체 — 발견하면 추격한다(기획 2026-09-24).
 	/// 해산·인원 초과로 집에 가는 중인 개체는 집에 닿을 때까지 제외 — 추격↔복귀가 매 프레임 뒤집히지 않게.
@@ -1248,7 +1250,13 @@ public class MonsterAI : MonoBehaviour
 			MonsterDirector.Announce(this, "우회 끝에서 발견 → 추격");
 			return;
 		}
-		PlaytestRecorder.Record("dispersal_return_home", name, transform.position, "not_found");
+		// 못 찾으면 새 길목으로 한 번 더 우회한다(기획 2026-09-24). 재시도에서도 못 찾으면 복귀
+		if (!detourRetried && MonsterDirector.Instance != null && MonsterDirector.Instance.RetryDetour(this))
+		{
+			detourRetried = true;
+			return;
+		}
+		PlaytestRecorder.Record("dispersal_return_home", name, transform.position, detourRetried ? "not_found_after_retry" : "not_found");
 		MonsterDirector.Announce(this, "우회 끝에 없음 → 복귀");
 		CommandDispersalReturn();
 	}
@@ -1399,6 +1407,7 @@ public class MonsterAI : MonoBehaviour
 			tacticalCorners = null;
 			tacticalHasVia = hasWaypoint = finalApproach = false;
 			dispersalDetour = false;
+			detourRetried = false;
 			agent.stoppingDistance = stoppingDistance;
 		}
 		if (newState != State.Investigate)
