@@ -29,8 +29,7 @@ public class MonsterAI : MonoBehaviour
 		Return = 3,
 		Stun = 4,
 		Intercept = 5,
-		Prepare = 6,
-		Idle = 7
+		Prepare = 6
 	}
 
 	/// <summary>AI 테스트 씬: 몬스터가 플레이어를 보지 못하게 한다.</summary>
@@ -104,13 +103,6 @@ public class MonsterAI : MonoBehaviour
 
 	[Tooltip("제자리 수색 시 회전 속도(도/초)")]
 	public float investigateTurnSpeed = 120f;
-
-	[Header("4-3. 멈춤 (Idle)")]
-	[Tooltip("할 수 있는 일이 없을 때(길이 없음, 발밑에 NavMesh 없음) 제자리에서 기다리다 이 주기(초)마다 다시 할 일을 찾는다")]
-	public float idleRetryInterval = 3f;
-
-	[Tooltip("멈춤 중 천천히 둘러보는 회전 속도(도/초). 멈춰 있어도 눈은 뜨고 있다")]
-	public float idleLookSpeed = 45f;
 
 	[Header("4-2. Debug")]
 	public bool showDebugLog = true;
@@ -212,9 +204,6 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("전역 몬스터 값만 사용. 줄줄이가 이 시간(초) 이어지면 감독이 해산 명령을 1회 내린다")]
 	public float dispersalQueueSeconds = 1f;
 
-	[Tooltip("전역 몬스터 값만 사용. 두 번째 추격자가 추격자와 같은 길로 이 시간(초) 이어서 달려오면 해산한다")]
-	public float extraChaserSeconds = 3f;
-
 	[Tooltip("추격↔차단 역할이 바뀐 직후 다시 바뀌지 않는 시간(초)")]
 
 	public static List<MonsterAI> activeMonsters = new List<MonsterAI>();
@@ -257,21 +246,14 @@ public class MonsterAI : MonoBehaviour
 	private bool returningFromDispersal;
 	public bool IsDispersing => dispersalDetour || returningFromDispersal;
 	public bool IsDispersalDetour => dispersalDetour && currentState == State.Intercept;
-	/// <summary>해산·인원 초과로 집에 가는 중. 집에 닿을 때까지 다시 추격하지 않는다.</summary>
-	public bool IsDispersalReturn => returningFromDispersal && currentState == State.Return;
-	/// <summary>표시용: 지금 따라가는 우회 경로(없으면 null).</summary>
-	public Vector3[] DebugTacticalRoute =>
-		(currentState == State.Intercept || currentState == State.Prepare) ? tacticalCorners : null;
 	// 우회 끝 판정 중(도착해서 찾으면 추적) — 감독이 추격을 허가한다
 	private bool finishingDetour;
-	// 이번 우회에서 새 길목을 이미 한 번 더 받았다 — 우회(Intercept·Prepare)를 벗어나면 풀린다
-	private bool detourRetried;
 	/// <summary>
 	/// 팀 밖에서 직접 본 개체(순찰·수색·일반 복귀 중)이거나 우회 끝에서 찾은 개체 — 발견하면 추격한다(기획 2026-09-24).
 	/// 해산·인원 초과로 집에 가는 중인 개체는 집에 닿을 때까지 제외 — 추격↔복귀가 매 프레임 뒤집히지 않게.
 	/// </summary>
 	public bool IsSightChaseCandidate => finishingDetour ||
-		currentState == State.Patrol || currentState == State.Investigate || currentState == State.Idle ||
+		currentState == State.Patrol || currentState == State.Investigate ||
 		(currentState == State.Return && !returningFromDispersal);
 	public bool HasCloseVisibleEncounter => !isStunned && !isJumping && player != null &&
 		Vector3.Distance(transform.position, player.position) <= 8f && CheckSight();
@@ -361,12 +343,6 @@ public class MonsterAI : MonoBehaviour
 	private const float SightFlickerGrace = 0.5f;
 	private const float TouchSightRange = 2f;
 
-	// 멈춤: 길 찾기에 연달아 실패한 횟수. 이 횟수를 넘으면 멈춤으로 들어간다
-	private const int MaxPathFailures = 3;
-	private const float IdleSnapDistance = 2f;
-	private int patrolFailures;
-	private int returnFailures;
-
 	// 소리 반응(멈칫)
 	private bool pendingNoise;
 	private float noiseReactUntil;
@@ -415,7 +391,6 @@ public class MonsterAI : MonoBehaviour
 			case State.Stun: return "기절";
 			case State.Intercept: return hasWaypoint ? "우회 이동" : (finalApproach ? "최종 접근" : "접근");
 			case State.Prepare: return PreparationAtGoal ? "통로 경계" : "다음 통로 이동";
-			case State.Idle: return "멈춤";
 			}
 			return currentState.ToString();
 		}
@@ -707,18 +682,6 @@ public class MonsterAI : MonoBehaviour
 		else { UpdateInterceptDestination(); }
 	}
 
-	/// <summary>
-	/// 협공 합류: 우회 중 가까이서 플레이어를 봤다 — 길목 임무를 끝내고 직접 쫓는다.
-	/// 해산 우회 중인 개체는 받지 않는다(우회 끝에서 판정한다).
-	/// </summary>
-	public void CommandJoinChase(Vector3 knownPosition)
-	{
-		if (!CanReceiveTactics || currentState != State.Intercept || dispersalDetour) { return; }
-		lastKnownPos = player != null ? player.position : knownPosition;
-		StartChase();
-		agent.SetDestination(lastKnownPos);
-	}
-
 	/// <summary>해산 명령(기획 2026-09-24): 지정 위치로 이동한다. 도착해서 찾으면 추적, 못 찾으면 해산(복귀)한다.</summary>
 	public void CommandDispersalDetour(Vector3[] corners, Vector3 via, bool detour)
 	{
@@ -835,19 +798,9 @@ public class MonsterAI : MonoBehaviour
 		}
 		if (GameFlowManager.Instance != null && !GameFlowManager.Instance.IsGameRunning)
 		{
-			if (agent.isOnNavMesh && !agent.isStopped)
+			if (!agent.isStopped)
 			{
 				agent.isStopped = true;
-			}
-			return;
-		}
-		// 발밑에 NavMesh가 없으면 어떤 상태도 길을 찾을 수 없다 — 멈춤으로 기다린다
-		if (!agent.isOnNavMesh)
-		{
-			if (!isStunned && !isJumping)
-			{
-				if (currentState != State.Idle) { EnterIdle("off_navmesh"); }
-				ProcessIdle(player != null && CheckSight());
 			}
 			return;
 		}
@@ -866,7 +819,6 @@ public class MonsterAI : MonoBehaviour
 		switch (currentState)
 		{
 		case State.Patrol:
-		case State.Idle:
 			agent.speed = patrolSpeed;
 			agent.acceleration = patrolAcceleration;
 			break;
@@ -944,9 +896,6 @@ public class MonsterAI : MonoBehaviour
 		case State.Return:
 			ProcessReturn(canSee);
 			break;
-		case State.Idle:
-			ProcessIdle(canSee);
-			break;
 		}
 	}
 
@@ -1000,7 +949,6 @@ public class MonsterAI : MonoBehaviour
 	{
 		isStunned = true;
 		PlaytestRecorder.Record("monster_stunned", name, transform.position);
-		MonsterDirector.Announce(this, "레이저 맞음 → 감전 " + (stunFreezeTime + stunRecoverTime).ToString("F0") + "초");
 		pendingNoise = false;
 		stateBeforeStun = currentState;
 		ChangeState(State.Stun);
@@ -1053,15 +1001,6 @@ public class MonsterAI : MonoBehaviour
 	private void ProcessPatrol(bool canSee)
 	{
 		if (canSee && TryStartChase()) { return; }
-		// 갈 수 있는 순찰 지점을 연달아 못 찾으면 매 프레임 길을 다시 묻지 않고 멈춤으로 기다린다
-		if (agent.hasPath && agent.pathStatus == NavMeshPathStatus.PathComplete) { patrolFailures = 0; }
-		if (patrolFailures >= MaxPathFailures) { EnterIdle("patrol_unreachable"); return; }
-		if (!agent.pathPending && agent.pathStatus == NavMeshPathStatus.PathInvalid)
-		{
-			patrolFailures++;
-			PickNewDestination();
-			return;
-		}
 		if (agent.pathPending || (agent.hasPath && agent.remainingDistance > agent.stoppingDistance)) { return; }
 		stateTimer -= Time.deltaTime;
 		if (patrolWaitTime <= 0f || stateTimer <= 0f) { PickNewDestination(); }
@@ -1129,7 +1068,6 @@ public class MonsterAI : MonoBehaviour
 	{
 		lostSight = false;
 		givingUp = true;
-		MonsterDirector.Announce(this, "끝내 놓침 → 둘러본 뒤 복귀");
 		lastKnownPos = base.transform.position;
 		ChangeState(State.Investigate);
 		isRushing = false;
@@ -1147,12 +1085,6 @@ public class MonsterAI : MonoBehaviour
 		{
 			givingUp = false;
 			TryStartChase();
-		}
-		else if (!agent.pathPending && agent.pathStatus == NavMeshPathStatus.PathInvalid)
-		{
-			// 수색 지점까지 길이 없다 — 도착을 영영 기다리지 않는다
-			givingUp = false;
-			EnterIdle("search_unreachable");
 		}
 		else if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance)
 		{
@@ -1186,20 +1118,17 @@ public class MonsterAI : MonoBehaviour
 	private void ProcessIntercept(bool canSee)
 	{
 		if (dispersalDetour) { ProcessDispersalDetour(canSee); return; }
-		// 마지막 구간이거나 10m 안에서 플레이어를 보면 협공 합류를 요청한다
-		if (canSee && Time.time >= nextRouteFailureReport && (!hasWaypoint ||
-			(player != null && Vector3.Distance(transform.position, player.position) <= 10f)))
+		if (canSee && !hasWaypoint && Time.time >= nextRouteFailureReport)
 		{
 			nextRouteFailureReport = Time.time + .25f;
 			MonsterDirector.Instance?.RefreshCloseApproach(this);
-			// 추격으로 넘어갔으면 아래 우회 처리(시간 초과 → 복귀 등)를 하지 않는다
-			if (currentState != State.Intercept) { return; }
 		}
 		interceptTimer -= Time.deltaTime;
 		if (interceptTimer <= 0f || tacticalCorners == null)
 		{
-			CommandGoHome(2f);
+			// 시간 초과·경로 없음도 우회 끝과 같다: 보고 있으면 추적, 못 보면 복귀
 			MonsterDirector.Instance?.InvalidateRoute(this);
+			FinishDispersalDetour(canSee);
 			return;
 		}
 		if (!agent.pathPending && (agent.pathStatus != NavMeshPathStatus.PathComplete || !agent.hasPath))
@@ -1227,7 +1156,7 @@ public class MonsterAI : MonoBehaviour
 	/// </summary>
 	private void ProcessDispersalDetour(bool canSee)
 	{
-		if (tacticalCorners == null) { FinishDispersalDetour(false); return; }
+		if (tacticalCorners == null) { FinishDispersalDetour(canSee); return; }
 		interceptTimer -= Time.deltaTime;
 		if (hasWaypoint && Vector3.Distance(transform.position, interceptWaypoint) < 1.25f)
 		{
@@ -1247,18 +1176,27 @@ public class MonsterAI : MonoBehaviour
 		if (chased)
 		{
 			PlaytestRecorder.Record("dispersal_found", name, transform.position, "chase");
-			MonsterDirector.Announce(this, "우회 끝에서 발견 → 추격");
 			return;
 		}
-		// 못 찾으면 새 길목으로 한 번 더 우회한다(기획 2026-09-24). 재시도에서도 못 찾으면 복귀
-		if (!detourRetried && MonsterDirector.Instance != null && MonsterDirector.Instance.RetryDetour(this))
-		{
-			detourRetried = true;
-			return;
-		}
-		PlaytestRecorder.Record("dispersal_return_home", name, transform.position, detourRetried ? "not_found_after_retry" : "not_found");
-		MonsterDirector.Announce(this, "우회 끝에 없음 → 복귀");
+		PlaytestRecorder.Record("dispersal_return_home", name, transform.position, canSee ? "seen_but_chase_denied" : "not_found");
 		CommandDispersalReturn();
+	}
+
+	/// <summary>
+	/// 우회 임무에서 빠질 때(감독이 새 계획에서 뽑지 않음): 지금 눈으로 보고 있으면 추적, 아니면 해산 복귀.
+	/// 발견하면 추적한다(기획 2026-09-24) — 플레이어를 보면서 집으로 돌아가지 않게. 추적했으면 true.
+	/// </summary>
+	public bool ReleaseFromDetour()
+	{
+		if (!isStunned && !isJumping && CheckSight())
+		{
+			finishingDetour = true;
+			bool chased = TryStartChase();
+			finishingDetour = false;
+			if (chased) return true;
+		}
+		CommandDispersalReturn();
+		return false;
 	}
 
 	/// <summary>해산 복귀: 최대한 빨리 집으로. 집에 닿아 순찰로 돌아갈 때까지 감독이 다시 끌어들이지 않는다.</summary>
@@ -1296,62 +1234,8 @@ public class MonsterAI : MonoBehaviour
 		else if (!agent.pathPending && (agent.pathStatus != NavMeshPathStatus.PathComplete || !agent.hasPath) && stateTimer > 1f)
 		{
 			stateTimer = 0f;
-			// 집까지 길이 계속 없으면 1초마다 영원히 재시도하지 않고 멈춤으로 기다린다
-			if (++returnFailures >= MaxPathFailures) { EnterIdle("home_unreachable"); return; }
 			if (zoneCenter != null) { agent.SetDestination(zoneCenter.position); }
 		}
-	}
-
-	/// <summary>
-	/// 멈춤: 할 수 있는 일이 없을 때의 안전한 기본 상태.
-	/// 길이 없거나 발밑에 NavMesh가 없을 때 들어온다. 제자리에서 천천히 둘러보며 눈은 뜨고 있고,
-	/// 일정 주기마다 할 일(집으로 가기 → 순찰)을 다시 찾는다. 감독의 명령은 언제든 받는다.
-	/// </summary>
-	private void EnterIdle(string reason)
-	{
-		PlaytestRecorder.Record("monster_idle", name, transform.position, reason);
-		MonsterDirector.Announce(this, "할 일 없음 → 멈춤");
-		if (showDebugLog)
-		{
-			Debug.Log($"<color=grey><b>[멈춤]</b></color> {base.name} — {reason}");
-		}
-		givingUp = false;
-		pendingNoise = false;
-		checkingCorner = false;
-		ChangeState(State.Idle);
-		stateTimer = Mathf.Max(0.5f, idleRetryInterval);
-	}
-
-	private void ProcessIdle(bool canSee)
-	{
-		if (canSee && agent.isOnNavMesh && TryStartChase()) { return; }
-		base.transform.Rotate(Vector3.up, idleLookSpeed * Time.deltaTime);
-		stateTimer -= Time.deltaTime;
-		if (stateTimer > 0f) { return; }
-		stateTimer = Mathf.Max(0.5f, idleRetryInterval);
-
-		if (!agent.isOnNavMesh)
-		{
-			// 발밑 가까이에 길이 있으면 그 위로 올려놓는다. 멀면 계속 기다린다
-			if (agent.enabled && NavMesh.SamplePosition(transform.position, out NavMeshHit hit, IdleSnapDistance, NavMesh.AllAreas))
-			{
-				agent.Warp(hit.position);
-			}
-			return;
-		}
-
-		// 할 일 다시 찾기: 집이 멀고 갈 수 있으면 집으로, 아니면 순찰
-		if (zoneCenter != null && Vector3.Distance(transform.position, zoneCenter.position) >= 3f)
-		{
-			var path = new NavMeshPath();
-			if (NavMesh.CalculatePath(transform.position, zoneCenter.position, NavigationFilter, path) &&
-				path.status == NavMeshPathStatus.PathComplete)
-			{
-				ChangeState(State.Return);
-				return;
-			}
-		}
-		ChangeState(State.Patrol);
 	}
 
 	private void PickNewDestination()
@@ -1390,7 +1274,7 @@ public class MonsterAI : MonoBehaviour
 				destination = vector;
 			}
 		}
-		if (!agent.SetDestination(destination)) { patrolFailures++; }
+		agent.SetDestination(destination);
 		stateTimer = patrolWaitTime;
 	}
 
@@ -1407,7 +1291,6 @@ public class MonsterAI : MonoBehaviour
 			tacticalCorners = null;
 			tacticalHasVia = hasWaypoint = finalApproach = false;
 			dispersalDetour = false;
-			detourRetried = false;
 			agent.stoppingDistance = stoppingDistance;
 		}
 		if (newState != State.Investigate)
@@ -1431,11 +1314,7 @@ public class MonsterAI : MonoBehaviour
 			break;
 		case State.Patrol:
 			agent.autoBraking = false;
-			patrolFailures = 0;
 			PickNewDestination();
-			break;
-		case State.Idle:
-			if (agent.isOnNavMesh) { agent.ResetPath(); }
 			break;
 		case State.Chase:
 			agent.autoBraking = true;
@@ -1447,7 +1326,6 @@ public class MonsterAI : MonoBehaviour
 			break;
 		case State.Return:
 			stateTimer = 0f;
-			returnFailures = 0;
 			if (zoneCenter != null)
 			{
 				agent.SetDestination(zoneCenter.position);
@@ -1477,7 +1355,6 @@ public class MonsterAI : MonoBehaviour
 		{
 			return false;
 		}
-		if (currentState != State.Chase && !finishingDetour) { MonsterDirector.Announce(this, "직접 발견 → 추격"); }
 		StartChase();
 		return true;
 	}
