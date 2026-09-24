@@ -212,6 +212,9 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("전역 몬스터 값만 사용. 줄줄이가 이 시간(초) 이어지면 감독이 해산 명령을 1회 내린다")]
 	public float dispersalQueueSeconds = 1f;
 
+	[Tooltip("전역 몬스터 값만 사용. 두 번째 추격자가 추격자와 같은 길로 이 시간(초) 이어서 달려오면 해산한다")]
+	public float extraChaserSeconds = 3f;
+
 	[Tooltip("추격↔차단 역할이 바뀐 직후 다시 바뀌지 않는 시간(초)")]
 
 	public static List<MonsterAI> activeMonsters = new List<MonsterAI>();

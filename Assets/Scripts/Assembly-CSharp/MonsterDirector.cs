@@ -136,6 +136,7 @@ public class MonsterDirector : MonoBehaviour
     private float Memory => Settings != null ? Mathf.Max(1, Settings.huntMemory) : 8f;
     private float QueueDistance => Settings != null ? Mathf.Max(1f, Settings.dispersalQueueDistance) : 10f;
     private float QueueSeconds => Settings != null ? Mathf.Max(0f, Settings.dispersalQueueSeconds) : 1f;
+    private float ExtraChaserSeconds => Settings != null ? Mathf.Max(0f, Settings.extraChaserSeconds) : 3f;
     // 사냥 팀 마릿수(추격 1 + 우회) — 인스펙터 huntTeamSize
     private int TeamSize => Settings != null ? Mathf.Max(1, Settings.huntTeamSize) : 3;
     // 추격자 뒤 줄에 들어온 시각 — 줄에서 빠지면 지운다
@@ -720,7 +721,12 @@ public class MonsterDirector : MonoBehaviour
         Vector3 toKeeper = Vector3.ProjectOnPlane(keeper.transform.position - target, Vector3.up);
         Vector3 toM = Vector3.ProjectOnPlane(m.transform.position - target, Vector3.up);
         sameSide = toKeeper.magnitude <= 2f || toM.magnitude <= .01f || Vector3.Dot(toM.normalized, toKeeper.normalized) > .5f;
-        if (sameSide) return true;
+        return sameSide || SharesRoute(m, target, keeperOption);
+    }
+
+    /// <summary>m이 target까지 가는 길이 keeper의 길과 겹치는가.</summary>
+    private bool SharesRoute(MonsterAI m, Vector3 target, MonsterRoutePlanner.Option keeperOption)
+    {
         if (keeperOption == null) return false;
         var path = planner.Path(m, m.transform.position, target);
         return path != null && MonsterRoutePlanner.Conflict(
@@ -730,9 +736,9 @@ public class MonsterDirector : MonoBehaviour
     private static string ShortName(MonsterAI m) => m == null ? "-" : m.name.Replace("Monster_", "");
 
     /// <summary>
-    /// 직접 추격은 1마리(기획 2026-09-24 보완). 추격자와 같은 쪽에서, 또는 같은 길로 달려오는 두 번째 추격자는
-    /// QueueSeconds 동안 이어지면 해산한다 — 추격자·다른 우회와 겹치지 않는 길목이 있으면 우회, 없으면 복귀.
-    /// 반대쪽·옆에서 다른 길로 들어오는 추격자는 협공이므로 그대로 둔다. 플레이어 2m 안(잡기 직전)도 그대로 둔다.
+    /// 두 번째 추격자 해산(2026-09-24 조건 강화). 추격자와 같은 길로 달려오는 두 번째 추격자는
+    /// ExtraChaserSeconds(3초) 동안 이어지면 해산한다 — 추격자·다른 우회와 겹치지 않는 길목이 있으면 우회, 없으면 복귀.
+    /// 다른 길로 들어오는 추격자는 같은 쪽이어도 그대로 둔다. 플레이어 2m 안(잡기 직전)도 그대로 둔다.
     /// 이번 사냥에서 이미 우회로 해산했던 개체가 또 같은 길로 붙으면 우회를 다시 주지 않고 복귀시킨다(우회↔추격 반복 방지).
     /// 해산 복귀 개체는 집에 닿을 때까지 다시 추격하지 않는다(IsSightChaseCandidate).
     /// </summary>
@@ -774,9 +780,10 @@ public class MonsterDirector : MonoBehaviour
             if (m.IsTraversingLink) continue;
             if (Vector3.ProjectOnPlane(m.transform.position - target, Vector3.up).magnitude <= 2f)
             { extraChaseSince.Remove(m); continue; }
-            if (!SameApproach(m, keeper, target, keeperOption, out bool sameSide)) { extraChaseSince.Remove(m); continue; }   // 협공
+            // 같은 길일 때만 해산한다 — 같은 쪽에서 다른 길로 오는 추격자는 그대로 둔다(2026-09-24 조건 강화)
+            if (!SharesRoute(m, target, keeperOption)) { extraChaseSince.Remove(m); continue; }
             if (!extraChaseSince.TryGetValue(m, out float since)) { extraChaseSince[m] = Time.time; continue; }
-            if (Time.time - since < QueueSeconds) continue;
+            if (Time.time - since < ExtraChaserSeconds) continue;
 
             extraChaseSince.Remove(m);
             changed = true;
@@ -788,8 +795,7 @@ public class MonsterDirector : MonoBehaviour
                 m.CommandDispersalReturn();
                 continue;
             }
-            PlaytestRecorder.Record("extra_chaser", m.name, m.transform.position,
-                (sameSide ? "same_side" : "shared_route") + ";keeper=" + keeper.name);
+            PlaytestRecorder.Record("extra_chaser", m.name, m.transform.position, "shared_route;keeper=" + keeper.name);
             SendDispersalDetour(m, keeper, occupied, reason);
         }
         if (changed) nextPlan = 0;
