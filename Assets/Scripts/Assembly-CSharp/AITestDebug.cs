@@ -458,73 +458,35 @@ public class AITestDebug : MonoBehaviour
 		ml.dest.startColor = ml.dest.endColor = dc;
 		SetSegment(ml.dest, pos, m.DebugDestination);
 
-		ml.intercept.enabled = m.IsIntercepting;
-		if (m.IsIntercepting) { SetCircle(ml.intercept, m.DebugInterceptPoint, 2.5f); }
+		ml.intercept.enabled = m.IsFlanking;
+		if (m.IsFlanking) { SetCircle(ml.intercept, m.FlankGoal, 2.5f); }
 	}
 
-	/// <summary>조정자가 내린 명령 지점: 차단(보라), 수색(노랑).</summary>
+	/// <summary>감독이 준 우회 목표 지점(보라 원).</summary>
 	private void DrawOrderPoints()
 	{
 		int i = 0;
 		MonsterDirector d = MonsterDirector.Instance;
 		if (d != null)
 		{
-			foreach (KeyValuePair<MonsterAI, Vector3> pair in d.DebugOrderPoints)
+			foreach (KeyValuePair<MonsterAI, MonsterDirector.RouteInfo> pair in d.DebugRoutes)
 			{
+				if (pair.Key == null || pair.Value == null) { continue; }
 				if (i >= orderMarkers.Count) { orderMarkers.Add(NewLine("Order" + i, Color.white, true)); }
-				Color c = d.DebugOrderLabel(pair.Key) == "차단" ? CutColor : SearchColor;
-				orderMarkers[i].startColor = orderMarkers[i].endColor = c;
+				orderMarkers[i].startColor = orderMarkers[i].endColor = CutColor;
 				orderMarkers[i].enabled = true;
-				SetCircle(orderMarkers[i], pair.Value, 2f);
+				SetCircle(orderMarkers[i], pair.Value.goal, 2f);
 				i++;
 			}
 		}
 		for (; i < orderMarkers.Count; i++) { orderMarkers[i].enabled = false; }
-
-		// 빙 돌아가는 중인 몬스터: 경유 지점(하늘색 원)과 거기까지 가는 선
-		int w = 0;
-		if (d != null)
-		{
-			foreach (MonsterAI m in MonsterAI.activeMonsters)
-			{
-				if (m == null || !m.TryGetWaypoint(out Vector3 wp)) { continue; }
-				while (w + 2 > waypointMarkers.Count)
-				{
-					waypointMarkers.Add(NewLine("Waypoint" + waypointMarkers.Count, WaypointColor, waypointMarkers.Count % 2 == 0));
-				}
-				waypointMarkers[w].enabled = true;
-				SetCircle(waypointMarkers[w], wp, 2.5f);
-				waypointMarkers[w + 1].enabled = true;
-				SetSegment(waypointMarkers[w + 1], m.transform.position, wp);
-				w += 2;
-			}
-		}
-		for (; w < waypointMarkers.Count; w++) { waypointMarkers[w].enabled = false; }
+		for (int w = 0; w < waypointMarkers.Count; w++) { waypointMarkers[w].enabled = false; }
 	}
 
-	/// <summary>
-	/// 차단 후보 길: 마지막 목격 위치에서 8방향으로 뻗은 선.
-	/// 선택된 길 = 보라, 선택 안 된 길 = 회색, 금방 막혀 버려진 방향 = 흐린 회색. 점수는 글자로 표시(OnGUI).
-	/// </summary>
+	/// <summary>예전 차단 후보 표시. 두 뇌 구조에는 후보 목록이 없다 — 선을 끈다.</summary>
 	private void DrawCutCandidates()
 	{
-		MonsterDirector d = MonsterDirector.Instance;
-		int i = 0;
-		if (d != null && d.IsHunting && d.HasSighting)
-		{
-			foreach (MonsterDirector.CutCandidate c in d.DebugCutCandidates)
-			{
-				if (i >= candidateLines.Count) { candidateLines.Add(NewLine("Candidate" + i, CandidateColor, false)); }
-				LineRenderer lr = candidateLines[i];
-				Color col = c.chosen ? CutColor : (c.rejected ? RejectedColor : CandidateColor);
-				lr.startColor = lr.endColor = col;
-				lr.widthMultiplier = c.chosen ? lineWidth * 1.4f : lineWidth * 0.7f;
-				lr.enabled = true;
-				SetSegment(lr, d.DebugCandidateOrigin, c.point);
-				i++;
-			}
-		}
-		for (; i < candidateLines.Count; i++) { candidateLines[i].enabled = false; }
+		for (int i = 0; i < candidateLines.Count; i++) { candidateLines[i].enabled = false; }
 	}
 
 	/// <summary>
@@ -540,7 +502,6 @@ public class AITestDebug : MonoBehaviour
 		if (show)
 		{
 			var visibleRoutes = new List<KeyValuePair<MonsterAI, MonsterDirector.RouteInfo>>(d.DebugRoutes);
-			visibleRoutes.AddRange(d.DebugPreparations);
 			foreach (KeyValuePair<MonsterAI, MonsterDirector.RouteInfo> kv in visibleRoutes)
 			{
 				MonsterDirector.RouteInfo r = kv.Value;
@@ -554,15 +515,6 @@ public class AITestDebug : MonoBehaviour
 				lr.enabled = true;
 				lr.positionCount = r.corners.Length;
 				for (int i = 0; i < r.corners.Length; i++) { lr.SetPosition(i, Lift(r.corners[i])); }
-				if (r.detour)
-				{
-					if (wi >= routeWaypoints.Count) { routeWaypoints.Add(NewLine("RouteWp" + wi, Color.white, true)); }
-					LineRenderer wp = routeWaypoints[wi++];
-					wp.startColor = wp.endColor = c;
-					wp.widthMultiplier = lineWidth;
-					wp.enabled = true;
-					SetCircle(wp, r.waypoint, 2.5f);
-				}
 			}
 		}
 		for (; li < routeLines.Count; li++) { routeLines[li].enabled = false; }
@@ -570,9 +522,7 @@ public class AITestDebug : MonoBehaviour
 
 		// 수렴 구간 — 이 안은 모든 길이 만나므로 겹침을 세지 않는다
 		if (convergeRing == null) { convergeRing = NewLine("ConvergeRing", new Color(1f, 0.35f, 0.25f, 0.8f), true); }
-		bool ring = show && player != null && d.DebugConvergenceRadius > 0.1f;
-		convergeRing.enabled = ring;
-		if (ring) { SetCircle(convergeRing, player.position, d.DebugConvergenceRadius); }
+		convergeRing.enabled = false;
 	}
 
 
@@ -599,11 +549,11 @@ public class AITestDebug : MonoBehaviour
 		{
 		case MonsterAI.State.Patrol: return new Color(0.55f, 0.85f, 0.55f);
 		case MonsterAI.State.Chase: return new Color(1f, 0.25f, 0.25f);
-		case MonsterAI.State.Investigate: return m.StateLabel == "이동" ? new Color(1f, 0.6f, 0.1f) : SearchColor;
+		case MonsterAI.State.Investigate: return m.StateLabel == "수색 이동" ? new Color(1f, 0.6f, 0.1f) : SearchColor;
 		case MonsterAI.State.Return: return new Color(0.3f, 0.8f, 1f);
 		case MonsterAI.State.Stun: return Color.white;
-		case MonsterAI.State.Intercept: return CutColor;
-		case MonsterAI.State.Prepare: return new Color(1f, .8f, .25f);
+		case MonsterAI.State.Flank: return CutColor;
+		case MonsterAI.State.Idle: return new Color(.6f, .6f, .6f);
 		}
 		return Color.gray;
 	}
@@ -679,17 +629,6 @@ public class AITestDebug : MonoBehaviour
 			{
 				DrawLabel(d.SightingPosition, "마지막 목격\n" + d.SightingAge.ToString("F1") + "초 전", SightColor);
 			}
-			// 차단 후보 길의 점수 — 왜 그 길을 골랐는지
-			if (d != null && d.IsHunting && d.HasSighting)
-			{
-				foreach (MonsterDirector.CutCandidate c in d.DebugCutCandidates)
-				{
-					if (c.rejected) { continue; }
-					// 못 가는 후보는 이유(늦음·관통·겹침)를 함께 — 왜 아무도 안 보냈는지
-					string note = string.IsNullOrEmpty(c.note) ? "" : " " + c.note;
-					DrawLabel(c.point, (c.chosen ? "▶ " : "") + c.score.ToString("F2") + note, c.chosen ? CutColor : CandidateColor);
-				}
-			}
 		}
 
 		// 좌상단 패널
@@ -704,13 +643,13 @@ public class AITestDebug : MonoBehaviour
 				foreach (MonsterAI t in d.DebugTeam) { if (t != null) { names.Add(t.name.Replace("Monster_", "")); } }
 				hunt = "사냥 팀 " + string.Join(", ", names);
 			}
-			sb.Append("<b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (압박 1 + 별도 진입 최대 2)");
+			sb.Append("<b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (추격 1 + 우회 최대 2)");
 			if (d.HasSighting)
 			{
 				sb.Append(" · 마지막 목격 <b>" + d.SightingAge.ToString("F1") + "초 전</b> (" + d.SightingSpotterName.Replace("Monster_", "") + ")");
 			}
 			sb.AppendLine();
-			sb.AppendLine("줄줄이 끊음 <b>" + d.DebugFollowBreaks + "</b>회 · " + d.DebugLayoutSummary);
+			sb.AppendLine(d.DebugLayoutSummary);
 		}
 		foreach (MonsterAI m in MonsterAI.activeMonsters)
 		{

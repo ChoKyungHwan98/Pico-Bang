@@ -214,8 +214,7 @@ public sealed class RearViewMirror : MonoBehaviour
             if (rearAmount < -.2f) continue;
 
             bool pursuing = monster.CurrentState == MonsterAI.State.Chase ||
-                monster.CurrentState == MonsterAI.State.Intercept ||
-                monster.CurrentState == MonsterAI.State.Prepare ||
+                monster.CurrentState == MonsterAI.State.Flank ||
                 monster.CurrentState == MonsterAI.State.Investigate;
             Vector3 towardPlayer = -direction;
             float closingSpeed = Vector3.Dot(monster.PlanarVelocity, towardPlayer);

@@ -4,9 +4,14 @@ using System.IO;
 using System.Text;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 
-/// <summary>Local, append-only playtest trace. Samples at 10 Hz; distance accumulates each rendered frame.</summary>
+/// <summary>
+/// Local, append-only playtest trace. Samples at 10 Hz; distance accumulates each rendered frame.
+/// QA: 모든 기록에 화면 타이머 시각(clock, 예: "04:22")이 붙는다. 플레이 중 F8을 누르면 그 순간을 표시(qa_mark)한다.
+/// 분석: Tools/QA/pico_qa.py (사용법은 CLAUDE.md "플레이 QA").
+/// </summary>
 [DefaultExecutionOrder(1000)]
 public sealed class PlaytestRecorder : MonoBehaviour
 {
@@ -23,6 +28,10 @@ public sealed class PlaytestRecorder : MonoBehaviour
     private readonly Dictionary<int, DistanceTrack> tracks = new Dictionary<int, DistanceTrack>();
     private readonly Dictionary<int, NavMeshAgent> agents = new Dictionary<int, NavMeshAgent>();
     private readonly Dictionary<int, string> roles = new Dictionary<int, string>();
+    private int qaMarks;
+    private float qaToastUntil;
+    private string qaToast;
+    private GUIStyle qaStyle;
 
     [Serializable] public class DistanceTrack
     {
@@ -35,15 +44,19 @@ public sealed class PlaytestRecorder : MonoBehaviour
     [Serializable] private class Actor
     {
         public int id;
-        public string name, state, role, pathStatus, preparationStatus;
+        public string name, state, label, role, pathStatus;
         public Vector3 position, forward, velocity, destination;
-        public bool hasPath, pathPending, stunned, visibleToCamera;
+        public bool hasPath, pathPending, stunned, visibleToCamera, seesPlayer;
         public float remainingDistance;
     }
     [Serializable] private class Frame
     {
         public string kind = "frame";
         public float t;
+        public string clock;
+        public bool hunting;
+        public Vector3 known;
+        public string director;
         public Actor player;
         public Actor[] monsters;
         public Vector3 cameraPosition, cameraForward;
@@ -52,7 +65,7 @@ public sealed class PlaytestRecorder : MonoBehaviour
     }
     [Serializable] private class Event
     {
-        public string kind = "event", type, actor, detail;
+        public string kind = "event", type, actor, detail, clock;
         public float t;
         public Vector3 position, secondary;
         public Vector3[] route;
@@ -66,7 +79,7 @@ public sealed class PlaytestRecorder : MonoBehaviour
     [Serializable] private class Header
     {
         public string kind = "header", schema = "pico-playtest-v2", utc, scene, unity;
-        public string aiPolicy = "persistent-corridor-missions-under-repeated-fire-2026-09-21";
+        public string aiPolicy = "two-brains-lead-flank-2026-09-25";
         public float sampleInterval = .1f;
         public Vector3 start, portal;
         public int targetGoal;
@@ -109,7 +122,7 @@ public sealed class PlaytestRecorder : MonoBehaviour
             }
         }
         startedAt = Time.time; nextSample = startedAt; nextFlush = startedAt + 1f; lastCapturedAt = startedAt;
-        frameCount = eventCount = 0; tracks.Clear(); agents.Clear(); roles.Clear();
+        frameCount = eventCount = qaMarks = 0; qaToastUntil = 0f; tracks.Clear(); agents.Clear(); roles.Clear();
         try
         {
             string root = Application.isEditor ? Path.GetFullPath(Path.Combine(Application.dataPath, "../PlaytestRecordings")) : Path.Combine(Application.persistentDataPath, "PlaytestRecordings");
@@ -141,7 +154,39 @@ public sealed class PlaytestRecorder : MonoBehaviour
         var r = Instance;
         if (r == null || !r.IsRecording) { return; }
         r.eventCount++;
-        r.Write(new Event { type = type, actor = actor, position = position, detail = detail, secondary = secondary, route = route, t = Time.time - r.startedAt });
+        r.Write(new Event { type = type, actor = actor, position = position, detail = detail, secondary = secondary, route = route, t = Time.time - r.startedAt, clock = Clock() });
+    }
+
+    /// <summary>화면 타이머와 같은 형식("mm:ss", 남은 시간). 사용자가 "4분 22초쯤"이라고 말하면 이 값으로 찾는다.</summary>
+    public static string Clock()
+    {
+        var tm = TargetManager.Instance;
+        if (tm == null) return "";
+        float t = Mathf.Max(0f, tm.CurrentTime);
+        return Mathf.FloorToInt(t / 60f).ToString("00") + ":" + Mathf.FloorToInt(t % 60f).ToString("00");
+    }
+
+    private void Update()
+    {
+        if (!IsRecording || Keyboard.current == null || !Keyboard.current.f8Key.wasPressedThisFrame) return;
+        qaMarks++;
+        string clock = Clock();
+        Record("qa_mark", "player", player != null ? player.position : Vector3.zero, "mark=" + qaMarks);
+        try { writer.Flush(); } catch (Exception ex) { Fail(ex); }
+        qaToast = "QA 표시 #" + qaMarks + " · " + clock + " — 기록됨";
+        qaToastUntil = Time.unscaledTime + 2.5f;
+        Debug.Log("[Playtest] " + qaToast);
+    }
+
+    private void OnGUI()
+    {
+        if (Time.unscaledTime > qaToastUntil || string.IsNullOrEmpty(qaToast)) return;
+        if (qaStyle == null)
+        {
+            qaStyle = new GUIStyle(GUI.skin.box) { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            qaStyle.normal.textColor = Color.yellow;
+        }
+        GUI.Box(new Rect(Screen.width * .5f - 220f, Screen.height * .18f, 440f, 44f), qaToast, qaStyle);
     }
     private void LateUpdate()
     {
@@ -189,7 +234,8 @@ public sealed class PlaytestRecorder : MonoBehaviour
         }
         int id = monster.GetInstanceID();
         if (!agents.TryGetValue(id, out var agent)) { agent = monster.GetComponent<NavMeshAgent>(); agents[id] = agent; }
-        result.state = monster.CurrentState.ToString(); result.stunned = monster.IsInStun;
+        result.state = monster.CurrentState.ToString(); result.label = monster.StateLabel; result.stunned = monster.IsInStun;
+        result.seesPlayer = monster.IsSeeingPlayer;
         result.velocity = monster.PlanarVelocity; result.destination = monster.DebugDestination;
         if (gameplayCamera != null)
         {
@@ -200,7 +246,6 @@ public sealed class PlaytestRecorder : MonoBehaviour
                  || occluder.transform.IsChildOf(transform));
         }
         var d = MonsterDirector.Instance; result.role = d != null ? d.DebugOrderLabel(monster) : "";
-        result.preparationStatus = d != null ? d.DebugPreparationStatus(monster) : "";
         if (!roles.TryGetValue(id, out string old) || old != result.role)
         {
             roles[id] = result.role; Record("role", monster.name, transform.position, result.role);
@@ -227,7 +272,11 @@ public sealed class PlaytestRecorder : MonoBehaviour
             UpdateStationary(m.transform, sampleDelta, m.PlanarVelocity);
             monsters.Add(Snapshot(m.transform, m));
         }
-        Write(new Frame { t = Time.time - startedAt, player = Snapshot(player), monsters = monsters.ToArray(),
+        var director = MonsterDirector.Instance;
+        Write(new Frame { t = Time.time - startedAt, clock = Clock(), player = Snapshot(player), monsters = monsters.ToArray(),
+            hunting = director != null && director.IsHunting,
+            known = director != null ? director.DebugKnownPosition : Vector3.zero,
+            director = director != null ? director.DebugLayoutSummary : "",
             cameraPosition = gameplayCamera != null ? gameplayCamera.transform.position : Vector3.zero,
             cameraForward = gameplayCamera != null ? gameplayCamera.transform.forward : Vector3.zero,
             health = health != null ? health.GetCurrentHealth() : 0,
