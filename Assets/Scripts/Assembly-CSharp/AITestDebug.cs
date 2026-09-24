@@ -604,6 +604,7 @@ public class AITestDebug : MonoBehaviour
 		case MonsterAI.State.Stun: return Color.white;
 		case MonsterAI.State.Intercept: return CutColor;
 		case MonsterAI.State.Prepare: return new Color(1f, .8f, .25f);
+		case MonsterAI.State.Idle: return new Color(.6f, .6f, .6f);
 		}
 		return Color.gray;
 	}
