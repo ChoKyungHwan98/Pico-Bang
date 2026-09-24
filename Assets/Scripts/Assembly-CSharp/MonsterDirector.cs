@@ -303,7 +303,8 @@ public class MonsterDirector : MonoBehaviour
     public bool TryGetPursuitHint(MonsterAI m, out Vector3 hint)
     {
         hint = knownPosition;
-        return hunting && team.Contains(m) && Time.time - knowledgeTime <= Memory;
+        // 팀원과 협공 추격자 모두 흔적 힌트를 받는다
+        return hunting && (team.Contains(m) || m.CurrentState == MonsterAI.State.Chase) && Time.time - knowledgeTime <= Memory;
     }
     public bool RequestChase(MonsterAI m)
     {
@@ -337,11 +338,25 @@ public class MonsterDirector : MonoBehaviour
             var other = MonsterRoutePlanner.Make(pair.Key, otherCorners, pair.Value.waypoint, pair.Value.detour, false);
             if (MonsterRoutePlanner.Conflict(approach, other, out _)) return;
         }
-        // Each independently arriving monster continues closing; acquiring this path does not replace the pursuer.
-        m.CommandTacticalRoute(corners, knownPosition, false);
-        routes[m] = new RouteInfo { corners = corners, goal = knownPosition, waypoint = knownPosition,
-            eta = EstimateArrival(approach), colorIndex = routes[m].colorIndex };
-        orders[m] = knownPosition; waypoints.Remove(m);
+        // 추격자와 같은 쪽·같은 길이면 합류하지 않고 길목 임무를 이어 간다(합류하면 곧바로 해산 대상이 된다)
+        if (pressure != null && pressure.CurrentState == MonsterAI.State.Chase && !pressure.IsInStun &&
+            Vector3.ProjectOnPlane(m.transform.position - knownPosition, Vector3.up).magnitude > 2f)
+        {
+            var pressurePath = planner.Path(pressure, pressure.transform.position, knownPosition);
+            var pressureOption = pressurePath != null ? MonsterRoutePlanner.Make(pressure, pressurePath, knownPosition, false, false) : null;
+            if (SameApproach(m, pressure, knownPosition, pressureOption, out _)) return;
+        }
+        // 길목 막기의 끝(와리가리 수정 2026-09-24): 다른 길로 가까이 들어와 플레이어를 본 우회 몬스터는 협공 추격으로 넘긴다.
+        // 예전에는 "플레이어에게 곧장" 경로를 우회 임무로 줬고, 다음 재계획이 그것을 다시 9m 밖 길목으로 바꿔
+        // 몬스터가 플레이어 쪽 ↔ 길목 쪽으로 번갈아 돌아섰다. 추격 상태는 재계획이 길목을 주지 않는다(Coordinate).
+        // 이후 추격자와 같은 길이 되면 CheckExtraChasers가 해산한다(한 사냥 두 번째면 복귀라 반복하지 않는다).
+        m.CommandJoinChase(knownPosition);
+        if (m.CurrentState != MonsterAI.State.Chase) return;
+        routes.Remove(m); orders.Remove(m); waypoints.Remove(m);
+        routeInvalidSince.Remove(m); routeInvalidGoal.Remove(m); invalidatedRouteGoal.Remove(m);
+        PlaytestRecorder.Record("close_approach_chase", m.name, m.transform.position,
+            "pressure=" + (pressure != null ? pressure.name : "-"), knownPosition, corners);
+        Announce(m, "우회 중 가까이서 발견 → 협공 추격");
     }
     private bool Eligible(MonsterAI m) => m != null && m.CanReceiveTactics && !m.IsGivingUp && !m.IsDispersing &&
         (!blockedUntil.TryGetValue(m, out float until) || Time.time >= until);
@@ -367,9 +382,10 @@ public class MonsterDirector : MonoBehaviour
             return;
         }
         if (Time.time >= nextPlan) Coordinate();
-        foreach (var m in team)
+        foreach (var m in MonsterAI.activeMonsters)
         {
-            if (m == null) continue;
+            // 팀원과 협공 추격자 모두 거리별 사냥 속도를 쓴다
+            if (m == null || !(team.Contains(m) || m.CurrentState == MonsterAI.State.Chase)) continue;
             float distance = Vector3.Distance(m.transform.position, knownPosition);
             float near = Settings != null ? Settings.huntNearDistance : 15f;
             float far = Settings != null ? Settings.huntFarDistance : 40f;
@@ -693,6 +709,24 @@ public class MonsterDirector : MonoBehaviour
         return true;
     }
 
+    /// <summary>
+    /// m이 keeper(추격자)와 같은 접근인가: 플레이어 기준 같은 쪽(60° 안)이거나, 다른 쪽이어도 길이 겹친다.
+    /// 협공 합류(RefreshCloseApproach)와 두 번째 추격자 해산(CheckExtraChasers)이 같은 기준을 써야
+    /// "합류 → 1초 뒤 해산 → 다시 합류"로 돌지 않는다.
+    /// </summary>
+    private bool SameApproach(MonsterAI m, MonsterAI keeper, Vector3 target,
+        MonsterRoutePlanner.Option keeperOption, out bool sameSide)
+    {
+        Vector3 toKeeper = Vector3.ProjectOnPlane(keeper.transform.position - target, Vector3.up);
+        Vector3 toM = Vector3.ProjectOnPlane(m.transform.position - target, Vector3.up);
+        sameSide = toKeeper.magnitude <= 2f || toM.magnitude <= .01f || Vector3.Dot(toM.normalized, toKeeper.normalized) > .5f;
+        if (sameSide) return true;
+        if (keeperOption == null) return false;
+        var path = planner.Path(m, m.transform.position, target);
+        return path != null && MonsterRoutePlanner.Conflict(
+            MonsterRoutePlanner.Make(m, path, target, false, false), keeperOption, out _);
+    }
+
     private static string ShortName(MonsterAI m) => m == null ? "-" : m.name.Replace("Monster_", "");
 
     /// <summary>
@@ -731,7 +765,6 @@ public class MonsterDirector : MonoBehaviour
         if (planner.AnchorCount == 0) planner.Rebuild();
         var keeperPath = planner.Path(keeper, keeper.transform.position, target);
         var keeperOption = keeperPath != null ? MonsterRoutePlanner.Make(keeper, keeperPath, target, false, false) : null;
-        Vector3 toKeeper = Vector3.ProjectOnPlane(keeper.transform.position - target, Vector3.up);
         var occupied = new List<MonsterRoutePlanner.Option>();
         bool changed = false;
         foreach (var m in chasers)
@@ -739,17 +772,9 @@ public class MonsterDirector : MonoBehaviour
             if (m == keeper) continue;
             // 점프 중에는 명령을 바꾸지 않는다 — 다음 검사에서 다시 본다(타이머는 유지)
             if (m.IsTraversingLink) continue;
-            Vector3 toM = Vector3.ProjectOnPlane(m.transform.position - target, Vector3.up);
-            if (toM.magnitude <= 2f) { extraChaseSince.Remove(m); continue; }
-            bool sameSide = toKeeper.magnitude <= 2f || Vector3.Dot(toM.normalized, toKeeper.normalized) > .5f;
-            bool sharedRoute = false;
-            if (!sameSide && keeperOption != null)
-            {
-                var path = planner.Path(m, m.transform.position, target);
-                sharedRoute = path != null && MonsterRoutePlanner.Conflict(
-                    MonsterRoutePlanner.Make(m, path, target, false, false), keeperOption, out _);
-            }
-            if (!sameSide && !sharedRoute) { extraChaseSince.Remove(m); continue; }   // 협공
+            if (Vector3.ProjectOnPlane(m.transform.position - target, Vector3.up).magnitude <= 2f)
+            { extraChaseSince.Remove(m); continue; }
+            if (!SameApproach(m, keeper, target, keeperOption, out bool sameSide)) { extraChaseSince.Remove(m); continue; }   // 협공
             if (!extraChaseSince.TryGetValue(m, out float since)) { extraChaseSince[m] = Time.time; continue; }
             if (Time.time - since < QueueSeconds) continue;
 

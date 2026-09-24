@@ -702,6 +702,18 @@ public class MonsterAI : MonoBehaviour
 		else { UpdateInterceptDestination(); }
 	}
 
+	/// <summary>
+	/// 협공 합류: 우회 중 가까이서 플레이어를 봤다 — 길목 임무를 끝내고 직접 쫓는다.
+	/// 해산 우회 중인 개체는 받지 않는다(우회 끝에서 판정한다).
+	/// </summary>
+	public void CommandJoinChase(Vector3 knownPosition)
+	{
+		if (!CanReceiveTactics || currentState != State.Intercept || dispersalDetour) { return; }
+		lastKnownPos = player != null ? player.position : knownPosition;
+		StartChase();
+		agent.SetDestination(lastKnownPos);
+	}
+
 	/// <summary>해산 명령(기획 2026-09-24): 지정 위치로 이동한다. 도착해서 찾으면 추적, 못 찾으면 해산(복귀)한다.</summary>
 	public void CommandDispersalDetour(Vector3[] corners, Vector3 via, bool detour)
 	{
@@ -1169,10 +1181,14 @@ public class MonsterAI : MonoBehaviour
 	private void ProcessIntercept(bool canSee)
 	{
 		if (dispersalDetour) { ProcessDispersalDetour(canSee); return; }
-		if (canSee && !hasWaypoint && Time.time >= nextRouteFailureReport)
+		// 마지막 구간이거나 10m 안에서 플레이어를 보면 협공 합류를 요청한다
+		if (canSee && Time.time >= nextRouteFailureReport && (!hasWaypoint ||
+			(player != null && Vector3.Distance(transform.position, player.position) <= 10f)))
 		{
 			nextRouteFailureReport = Time.time + .25f;
 			MonsterDirector.Instance?.RefreshCloseApproach(this);
+			// 추격으로 넘어갔으면 아래 우회 처리(시간 초과 → 복귀 등)를 하지 않는다
+			if (currentState != State.Intercept) { return; }
 		}
 		interceptTimer -= Time.deltaTime;
 		if (interceptTimer <= 0f || tacticalCorners == null)
