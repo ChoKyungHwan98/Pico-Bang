@@ -21,15 +21,6 @@ public class MonsterAI : MonoBehaviour
 		Global_Stalker = 1
 	}
 
-	/// <summary>사용하지 않는다. 씬 호환을 위해 남겨 둠 — 모든 몬스터는 "보이면 곧장 쫓기"로 통일(기획: 같은 AI).</summary>
-	public enum ChaseStyle
-	{
-		Blinky_Direct = 0,
-		Pinky_Predict = 1,
-		Inky_Tactical = 2,
-		Rusher_Berserk = 3
-	}
-
 	public enum State
 	{
 		Patrol = 0,
@@ -46,9 +37,6 @@ public class MonsterAI : MonoBehaviour
 
 	[Header("1. Identity & Role")]
 	public MonsterRole role;
-
-	[Tooltip("사용하지 않음. 추격 방식은 전부 같다 — 앞길·옆길 차단은 감독이 맡는다")]
-	public ChaseStyle style;
 
 	public Transform player;
 
@@ -152,59 +140,9 @@ public class MonsterAI : MonoBehaviour
 	public float stunArcJaggedness = 0.16f;
 
 	[Header("6. 조정자(Director) — 전역 몬스터의 값만 사용됨")]
-	[Tooltip("동시에 직접 쫓는 최대 마릿수")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public int maxSimultaneousChasers = 2;
 
 	[Tooltip("최대 사냥 팀 크기(1~3). 압박 1 + 서로 다른 진입 경로가 있는 지원 최대 2")]
 	public int huntTeamSize = 3;
-
-	[Tooltip("팀 밖 몬스터가 가장 먼 차단 팀원보다 이 비율만큼 가까우면 교대(0~1). 도망친 쪽 구역 몬스터가 앞길로 올라온다")]
-	[Range(0.1f, 1f)]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float teamSwapRatio = 0.6f;
-
-	[Tooltip("경로 겹침이 이 비율을 넘으면 대체 경로(경유지)를 찾는다. 0=늘 우회, 1=절대 우회 안 함")]
-	[Range(0f, 1f)]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float routeOverlapThreshold = 0.45f;
-
-	[Tooltip("두 경로가 이 거리 안이면 '같은 길'로 본다(m)")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float routeNearDistance = 3f;
-
-	[Tooltip("플레이어 이 반경 안은 겹침 판정에서 제외한다(m). 모든 경로가 플레이어에서 만나므로 " +
-		"빼지 않으면 지워지지 않는 바닥값이 생긴다. 다만 넓게 빼면 공유 통로가 묻히므로 주의")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float convergenceExcludeRadius = 8f;
-
-	[Tooltip("차단 후보: 플레이어에게서 8방향으로 바닥을 따라 최대 이만큼 뻗어 본다(m)")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float cutCandidateMaxDistance = 18f;
-
-	[Tooltip("차단 후보: 이만큼도 못 가고 막히는 방향은 버린다(m)")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float cutCandidateMinDistance = 6f;
-
-	[Tooltip("차단 후보: 서로 이 거리 안이면 하나로 합친다(m). 너무 크면 막을 방향이 서너 개로 줄어 포위가 한쪽으로 몰린다")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float cutCandidateMergeDistance = 6f;
-
-	[Tooltip("차단 대기 몬스터가 덮치려 할 때, 가장 먼 추격자보다 이만큼 이상 가까워야 교대한다(m)")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float swapDistanceMargin = 3f;
-
-	[Tooltip("차단하러 가는 길이 플레이어 이 반경 안을 지나면 비싸게 친다 — 뚫고 가면 결국 뒤를 쫓는 꼴")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float crossingAvoidRadius = 6f;
-
-	[Tooltip("감독이 차단 목적지를 흐리는 반경(m). 몬스터에게 정확한 좌표를 주지 않는다")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float hintBlurRadius = 4f;
-
-	[Tooltip("추격자가 놓쳤을 때 감독이 주는 힌트의 흐림 반경(m)")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float pursuitHintBlur = 3f;
 
 	[Tooltip("마지막 목격 또는 사격 정보 이후 이 시간이 지나면 사냥 종료(초)")]
 	public float huntMemory = 8f;
@@ -249,51 +187,12 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("지원 경로의 최대 도착 시간(초). 초과하거나 추격 통로와 겹치면 지원에 뽑지 않는다")]
 	public float detourTimeLimit = 8f;
 
-	[Tooltip("빙 돌아가기: 플레이어에게서 이 거리(m)에 경유 지점을 잡는다. 여기를 먼저 들른 뒤 막을 자리로 간다")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float detourWaypointDistance = 22f;
-
-	[Tooltip("들어오는 쪽을 가르는 기준 각도. 차단 몬스터는 추격자와, 그리고 서로 이 각도 이상 다른 쪽에서 들어온다")]
-	[Range(30f, 150f)]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float sideAngleMin = 90f;
-
-	[Tooltip("흩어짐: 이 시간(초) 동안 조인 뒤 흩어진다. 팩맨의 스캐터 — 추격이 길어져도 다 같이 몰리지 않게")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float scatterAfter = 20f;
-
-	[Tooltip("흩어짐: 물러나 있는 시간(초). 이 동안 추격자만 계속 쫓고, 막던 몬스터는 자기 구역으로 돌아간다")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float scatterTime = 6f;
-
-	[Tooltip("흩어짐: 물러난 몬스터를 다시 부르지 않는 시간(초). 왔다 갔다 방지")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float scatterRejoinBlock = 8f;
-
-	[Tooltip("추격 인계: 추격자가 자기 구역 밖(반경 ×1.2)에 이 시간(초) 이상 머무르면, 플레이어가 있는 구역 몬스터가 이어받는다")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float handoverDelay = 3f;
-
-	[HideInInspector] // Legacy scene data. Gameplay teleportation has been removed.
-	public float teleportUnseenTime = 3f;
-
-	[Tooltip("복귀 순간이동: 플레이어와 이 거리(m) 밖일 때만. 출발·도착 모두 보이지 않아야 한다")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float teleportMinDistance = 40f;
-
-	[Tooltip("복귀 순간이동 판정에 쓰는 플레이어 시야각(도). 이 안이고 가려지지 않았으면 '보인다'로 친다")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float playerViewAngle = 90f;
-
 	[Header("7. Jump (단차 이동)")]
 	public float jumpDuration = 0.5f;
 
 	public float jumpHeight = 1.5f;
 
 	[Header("8. 차단 대기 (감독이 지시)")]
-	[Tooltip("차단 대기 중 플레이어가 이 거리 안에 보이면 덮친다")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float ambushEngageRange = 8f;
 
 	[Tooltip("차단 명령이 이 시간 동안 갱신되지 않으면 포기하고 복귀한다(초)")]
 	public float interceptTimeout = 12f;
@@ -306,21 +205,6 @@ public class MonsterAI : MonoBehaviour
 	public float dispersalQueueSeconds = 1f;
 
 	[Tooltip("추격↔차단 역할이 바뀐 직후 다시 바뀌지 않는 시간(초)")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float roleLockTime = 2f;
-
-	[Tooltip("경유지에 이 거리 안으로 들어오면 지난 것으로 보고 최종 접근으로 넘어간다(m)")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float waypointReachedDistance = 3f;
-
-	[Tooltip("최종 접근 중 플레이어 위치를 다시 조준하는 간격(초). 0이면 매 프레임")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float finalApproachRefresh = 0.15f;
-
-	[Tooltip("플레이어에게 이 거리 안까지 붙었으면 감독이 경로를 갈아엎지 않는다(m). " +
-		"거의 닿았는데 갑자기 딴 길로 돌아가는 것을 막는다. 멀리 있을 때는 잠기지 않아야 겹침 배정이 계속 돈다")]
-	[HideInInspector] // Legacy serialized value; not used by joint route planning.
-	public float routeLockDistance = 12f;
 
 	public static List<MonsterAI> activeMonsters = new List<MonsterAI>();
 
@@ -371,7 +255,6 @@ public class MonsterAI : MonoBehaviour
 	public bool IsSightChaseCandidate => finishingDetour ||
 		currentState == State.Patrol || currentState == State.Investigate ||
 		(currentState == State.Return && !returningFromDispersal);
-	public bool IsRoleLocked => Time.time < roleLockUntil;
 	public bool HasCloseVisibleEncounter => !isStunned && !isJumping && player != null &&
 		Vector3.Distance(transform.position, player.position) <= 8f && CheckSight();
 
@@ -439,9 +322,7 @@ public class MonsterAI : MonoBehaviour
 	private Collider playerCollider;
 
 	private bool playerPassThrough;
-	private float roleLockUntil;
 	private float noiseReactReadyAt;        // 이 시각 전에는 다시 멈칫하지 않는다
-	private float WaypointReached => waypointReachedDistance;
 
 	// 사냥 속도 (감독이 정함, 음수면 chaseSpeed)
 	private float huntSpeed = -1f;
@@ -469,8 +350,6 @@ public class MonsterAI : MonoBehaviour
 
 	public bool IsInStun => currentState == State.Stun;
 
-	public bool IsRushing => currentState == State.Investigate && isRushing;
-
 	/// <summary>끈질김이 떨어져 두리번거리는 중. 감독은 이 개체를 팀에서 뺀다.</summary>
 	public bool IsGivingUp => givingUp;
 
@@ -486,47 +365,12 @@ public class MonsterAI : MonoBehaviour
 		}
 	}
 
-	/// <summary>지금 위치 + 현재 계획 경로. 몬스터끼리 같은 길을 쓰는지 비교할 때 쓴다.</summary>
-	public Vector3[] SpacingRoute()
-	{
-		List<Vector3> points = new List<Vector3>();
-		points.Add(base.transform.position);
-		if (agent != null && agent.isOnNavMesh && agent.hasPath)
-		{
-			points.AddRange(agent.path.corners);
-		}
-		return points.ToArray();
-	}
-
 	public State CurrentState => currentState;
 
 	public bool IsIntercepting => currentState == State.Intercept;
 
-	/// <summary>감독이 이 개체를 추격에서 차단으로 돌려도 되는가. 전역 몬스터는 제외, 방금 역할이 바뀌었으면 보류.</summary>
-	public bool CanBeDemoted =>
-		currentState == State.Chase && role == MonsterRole.Zone_Defender && Time.time >= roleLockUntil;
-
-	/// <summary>감독의 명령(수색·차단)을 받을 수 있는가. 직접 쫓는 중·기절·점프 중이면 제외.</summary>
-	public bool IsAvailableForOrders =>
-		currentState != State.Chase && CanReceiveTactics;
-
 	/// <summary>경유지를 지나 플레이어에게 곧장 들어가는 중인가. 이 동안은 멈추지 않는다.</summary>
 	public bool IsFinalApproach => finalApproach && currentState == State.Intercept;
-
-	/// <summary>
-	/// 감독이 경로를 갈아엎으면 안 되는 상태인가. 최종 접근 중이고 <b>플레이어에게 충분히 붙었을 때만</b> 잠근다.
-	/// 멀리서부터 잠그면 겹침 배정이 영영 돌지 않는다(QA 2026-09-20에서 잡힌 문제).
-	/// </summary>
-	public bool IsRouteLocked
-	{
-		get
-		{
-			if (!IsFinalApproach || player == null) { return false; }
-			Vector3 gap = player.position - base.transform.position;
-			gap.y = 0f;
-			return gap.magnitude <= routeLockDistance;
-		}
-	}
 
 	/// <summary>AI 테스트 씬 표시용 상태 이름.</summary>
 	public string StateLabel
@@ -644,7 +488,6 @@ public class MonsterAI : MonoBehaviour
 		isStunned = false;
 		isJumping = false;
 		isRushing = false;
-		roleLockUntil = 0f;
 		damageTimer = 0f;
 		huntSpeed = -1f;
 		pendingNoise = false;
@@ -1477,11 +1320,6 @@ public class MonsterAI : MonoBehaviour
 
 	private void StartChase()
 	{
-		if (currentState != State.Chase)
-		{
-			// 막 추격을 시작한 개체를 곧바로 차단으로 돌리지 않도록
-			roleLockUntil = Time.time + roleLockTime;
-		}
 		givingUp = false;
 		pendingNoise = false;
 		ChangeState(State.Chase);
