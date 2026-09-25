@@ -67,7 +67,8 @@ public class MonsterDirector : MonoBehaviour
     private readonly Dictionary<MonsterAI, float> nextFlankPlan = new Dictionary<MonsterAI, float>();
     private readonly Dictionary<MonsterAI, int> preferredSide = new Dictionary<MonsterAI, int>();
     private readonly Dictionary<MonsterAI, float> flankInvalidSince = new Dictionary<MonsterAI, float>();
-    private readonly Dictionary<MonsterAI, float> flankSince = new Dictionary<MonsterAI, float>();   // 우회 역할을 맡은 시각
+    private readonly Dictionary<MonsterAI, float> flankSince = new Dictionary<MonsterAI, float>();
+    private readonly Dictionary<MonsterAI, float> closeInUntil = new Dictionary<MonsterAI, float>();   // 갈림길에서 조여 드는 중   // 우회 역할을 맡은 시각
     private readonly Dictionary<MonsterAI, RouteInfo> routes = new Dictionary<MonsterAI, RouteInfo>();
     private readonly Dictionary<string, float> decisionThrottle = new Dictionary<string, float>();
     private readonly List<MonsterAI> team = new List<MonsterAI>();
@@ -90,7 +91,7 @@ public class MonsterDirector : MonoBehaviour
     private float knowledgeTime = float.NegativeInfinity, sightTime = float.NegativeInfinity, headingTime = float.NegativeInfinity;
     private Vector3 headingSamplePos;
     private float headingSampleTime = float.NegativeInfinity;
-    private float nextPlan, nextSpread;
+    private float nextPlan, nextSpread, nextRotateCheck;
     private float leadChangedAt = float.NegativeInfinity;   // 추격자가 바뀐 시각 — 2초 안에 다시 바꾸지 않는다
     private string summary = "순찰 중";
     private int huntCount;
@@ -304,6 +305,21 @@ public class MonsterDirector : MonoBehaviour
         // 무리가 플레이어 위치를 2초 안에 알았다면 '못 찾음'이 아니라 먼저 도착한 것이다 — 다음 지점만 받는다
         if (Time.time - knowledgeTime <= 2f)
         {
+            // 갈림길에 먼저 왔는데 플레이어가 다른 가지로 갔다 — 가까우면(길 30m) 새 갈림길로 헤매지 않고
+            // 그 자리(추격자와 다른 쪽)에서 조여 들어간다. 추격자와 같은 쪽이면 뒤따라가기라 다음 갈림길로
+            var toPlayer = ComputePath(m, knownPosition);
+            Vector3 side = Vector3.ProjectOnPlane(m.transform.position - knownPosition, Vector3.up);
+            Vector3 leadSide = lead != null && lead != m ? Vector3.ProjectOnPlane(lead.transform.position - knownPosition, Vector3.up) : Vector3.zero;
+            bool otherSide = leadSide.sqrMagnitude < 4f || side.sqrMagnitude < .01f || Vector3.Angle(side, leadSide) >= 70f;
+            if (toPlayer != null && Length(toPlayer) <= 30f && otherSide && !PassesNear(toPlayer, lead != null ? lead.transform.position : knownPosition + Vector3.up * 999f, 4f))
+            {
+                SetRole(m, lead == null ? Role.Lead : Role.Assist);
+                if (lead == null) lead = m;
+                closeInUntil[m] = Time.time + 4f;
+                m.CommandChase(knownPosition);
+                Decide(m, "flank_close_in", "갈림길에 먼저 도착, 플레이어는 다른 길(" + Length(toPlayer).ToString("F0") + "m) → 이 쪽에서 조여 감", 1.5f);
+                return;
+            }
             Decide(m, "flank_early", "우회 지점에 먼저 도착 → 플레이어 앞쪽 다음 지점", 1.5f);
             AssignFlank(m, true);
             return;
@@ -630,7 +646,9 @@ public class MonsterDirector : MonoBehaviour
         foreach (var m in chasers)
         {
             if (m == lead || RoleOf(m) != Role.Assist) { queueSince.Remove(m); continue; }
-            if (!m.IsSeeingPlayer && Time.time - m.SeenPlayerAt > 1.5f)
+            // 갈림길에서 조여 들어가는 중(4초)에는 아직 못 봐도 우회로 되돌리지 않는다 — 두 규칙이 서로 뒤집지 않게
+            if (!m.IsSeeingPlayer && Time.time - m.SeenPlayerAt > 1.5f &&
+                !(closeInUntil.TryGetValue(m, out float closeIn) && Time.time < closeIn))
             {
                 queueSince.Remove(m);
                 SetRole(m, Role.Flank);
@@ -658,21 +676,58 @@ public class MonsterDirector : MonoBehaviour
     }
 
     /// <summary>
-    /// 교대 순환: 우회를 flankRotateSeconds 넘게 했는데 협공에 못 들어갔으면 빈 구역으로 돌려보낸다.
-    /// 빈자리는 FillFlanks가 구역을 비우지 않는 몬스터로 다시 채운다 — 몬스터가 오가서 5마리가 더 많아 보이고, 구역도 덜 빈다.
-    /// 플레이어를 보고 있는 몬스터는 돌려보내지 않는다.
+    /// 우회 교대(2026-09-26): 우회 중인 몬스터보다 2.5초 이상 빨리 우회 지점에 닿는 몬스터가 있으면 그 자리에서 맞바꾼다.
+    /// 우회를 flankRotateSeconds 넘게 했는데 협공에 못 들어갔으면, 대신 들어올 몬스터가 있을 때만 맞바꾼다(빈자리를 만들지 않는다).
+    /// 인원 3마리는 그대로 — 늘 가까이 있는 3마리가 되게 한다. 플레이어를 보고 있는 몬스터는 바꾸지 않는다. 1초에 한 번만 본다.
     /// </summary>
     private void RotateFlanks()
     {
+        if (Time.time < nextRotateCheck) return;
+        nextRotateCheck = Time.time + 1f;
+        if (Time.time - sightTime > 3f) return;
         float limit = Settings != null ? Settings.flankRotateSeconds : 15f;
-        if (limit <= 0f) return;
         foreach (var m in new List<MonsterAI>(roles.Keys))
         {
-            if (RoleOf(m) != Role.Flank || m.IsSeeingPlayer || m.IsTraversingLink) continue;
-            if (!flankSince.TryGetValue(m, out float since) || Time.time - since < limit) continue;
-            Decide(m, "flank_rotate", "우회 " + limit.ToString("F0") + "초 동안 협공 못 함 → 교대, 빈 구역으로");
+            if (RoleOf(m) != Role.Flank || m.IsSeeingPlayer || m.IsTraversingLink || m.CurrentState != MonsterAI.State.Flank) continue;
+            if (!flankSince.TryGetValue(m, out float since) || Time.time - since < 4f) continue;
+            var path = ComputePath(m, m.FlankGoal);
+            float remaining = path != null ? Length(path) / FarSpeed : float.PositiveInfinity;
+            bool tooLong = limit > 0f && Time.time - since >= limit;
+            var replacement = BestFreeFlanker(out FlankChoice choice);
+            if (replacement == null) continue;
+            if (!(choice.eta + 2.5f < remaining) && !tooLong) continue;
+            Decide(m, "flank_swap", (tooLong ? "우회 " + limit.ToString("F0") + "초 동안 협공 못 함" : "남은 거리 약 " + remaining.ToString("F1") + "초") +
+                " → " + Short(replacement) + "(약 " + choice.eta.ToString("F1") + "초)와 교대, 빈 구역으로");
             SendHome(m, true);
+            SetRole(replacement, Role.Flank);
+            Decide(replacement, "flank_recruit", Short(m) + " 대신 우회 합류 (약 " + choice.eta.ToString("F1") + "초 거리)");
+            AssignFlank(replacement, true);
+            return;   // 한 번에 한 마리
         }
+    }
+
+    /// <summary>팀 밖 몬스터 중 우회 지점에 가장 알맞게 닿는 몬스터(구역을 비우지 않는 몬스터 먼저, 5초 넘게 걸리면 벌점).</summary>
+    private MonsterAI BestFreeFlanker(out FlankChoice bestChoice)
+    {
+        bestChoice = default;
+        bestChoice.score = float.PositiveInfinity;
+        var candidates = BuildCandidates(Settings, knownPosition);
+        if (candidates.Count == 0) return null;
+        MonsterAI best = null;
+        foreach (var m in MonsterAI.activeMonsters)
+        {
+            if (m == null || roles.ContainsKey(m) || !m.CanTakeOrders || m.IsGivingUp) continue;
+            if (benchUntil.TryGetValue(m, out float until) && Time.time < until) continue;
+            if (Vector3.Distance(m.transform.position, knownPosition) > RecruitRange) continue;
+            if (!TryChooseFlank(m, candidates, 1, out var choice)) continue;
+            // 구역을 비우지 않는 몬스터를 먼저: 전역 몬스터(구역 없음), 플레이어가 자기 구역 안에 있는 몬스터.
+            // 먼 구역 몬스터를 끌어오면 그 구역이 비어 맵이 한쪽으로 몰린다
+            float drain = m.role == MonsterAI.MonsterRole.Global_Stalker || m.useGlobalNavMesh ? -1f
+                : m.zoneCenter != null && Vector3.Distance(knownPosition, m.zoneCenter.position) <= m.zoneRadius + 15f ? 0f : 2.5f;
+            choice.score += drain + Mathf.Max(0f, choice.eta - 5f) * .6f;
+            if (choice.score < bestChoice.score) { best = m; bestChoice = choice; }
+        }
+        return best;
     }
 
     /// <summary>인원 초과: 추격자는 남기고, 플레이어에게서 가장 먼 몬스터를 빈 구역으로 보낸다.</summary>
@@ -697,28 +752,11 @@ public class MonsterDirector : MonoBehaviour
     private void FillFlanks()
     {
         if (roles.Count >= TeamSize) return;
-        // 3초 넘게 아무도 못 보고 못 들었으면 새로 부르지 않는다 — 오래된 위치로 몰려가 봐야 헛걸음이다
+        // 3초 넘게 아무도 못 봤으면 새로 부르지 않는다 — 오래된 위치로 몰려가 봐야 헛걸음이다
         if (Time.time - sightTime > 3f) return;
-        var candidates = BuildCandidates(Settings, PredictedPosition());
-        if (candidates.Count == 0) return;
         while (roles.Count < TeamSize)
         {
-            MonsterAI best = null;
-            FlankChoice bestChoice = default;
-            bestChoice.score = float.PositiveInfinity;
-            foreach (var m in MonsterAI.activeMonsters)
-            {
-                if (m == null || roles.ContainsKey(m) || !m.CanTakeOrders || m.IsGivingUp) continue;
-                if (benchUntil.TryGetValue(m, out float until) && Time.time < until) continue;
-                if (Vector3.Distance(m.transform.position, knownPosition) > RecruitRange) continue;
-                if (!TryChooseFlank(m, candidates, 1, out var choice)) continue;
-                // 구역을 비우지 않는 몬스터를 먼저: 전역 몬스터(구역 없음), 플레이어가 자기 구역 안에 있는 몬스터.
-                // 먼 구역 몬스터를 끌어오면 그 구역이 비어 맵이 한쪽으로 몰린다
-                float drain = m.role == MonsterAI.MonsterRole.Global_Stalker || m.useGlobalNavMesh ? -1f
-                    : m.zoneCenter != null && Vector3.Distance(knownPosition, m.zoneCenter.position) <= m.zoneRadius + 15f ? 0f : 2.5f;
-                choice.score += drain;
-                if (choice.score < bestChoice.score) { best = m; bestChoice = choice; }
-            }
+            var best = BestFreeFlanker(out FlankChoice bestChoice);
             if (best == null) break;
             SetRole(best, Role.Flank);
             Decide(best, "flank_recruit", "우회 자리 비어 있음 → 합류 (약 " + bestChoice.eta.ToString("F1") + "초 거리)");
@@ -787,7 +825,12 @@ public class MonsterDirector : MonoBehaviour
     private struct Candidate
     {
         public Vector3 point;
+        public Vector3[] route;      // 플레이어(마지막으로 안 위치)에서 이 지점까지의 길
+        public float playerEta;      // 플레이어가 달려서(11) 닿는 시간
     }
+
+    private List<Candidate> candidateCache;
+    private float candidateCacheTime = float.NegativeInfinity;
 
     private void BuildAnchors()
     {
@@ -803,36 +846,81 @@ public class MonsterDirector : MonoBehaviour
     }
 
     /// <summary>
-    /// 우회 목표 후보: 예상 위치에서 8~30m 떨어진 걸을 수 있는 지점 중, 예상 위치에서 길로 이어진 곳(벽 너머 아님).
-    /// 방향을 30° 칸 12개로 나눠 칸마다 하나씩(flankRadius에 가장 가까운 것) — 모든 방향을 고르게 본다.
+    /// 우회 목표 후보(2026-09-26 갈림길 우회): 플레이어가 곧 달려갈 곳.
+    /// 마지막으로 안 위치에서 8~32m의 걸을 수 있는 지점 중, 거기까지의 길이 앞쪽(이동 방향)으로 출발하고 너무 돌아가지 않는 곳.
+    /// 방향 30° 칸마다 가까운 것(8~18m)·먼 것(18~32m) 하나씩 — 플레이어의 길(route)과 도착 시각을 함께 들고 있다.
+    /// 우회 몬스터는 이 길과 겹치지 않는 다른 가지로 들어와야 하므로(TryChooseFlank), 목표는 자연히 갈림길이 된다.
+    /// 0.3초 안에는 다시 계산하지 않는다.
     /// </summary>
-    private List<Candidate> BuildCandidates(MonsterAI sample, Vector3 predicted)
+    private List<Candidate> BuildCandidates(MonsterAI sample, Vector3 predictedUnused)
     {
+        if (candidateCache != null && Time.time - candidateCacheTime < .3f) return candidateCache;
         var list = new List<Candidate>();
+        candidateCache = list;
+        candidateCacheTime = Time.time;
         if (anchors.Count == 0) BuildAnchors();
-        if (!NavMesh.SamplePosition(predicted, out var origin, 4f, NavMesh.AllAreas)) return list;
-        var best = new Vector3?[12];
-        var bestError = new float[12];
-        foreach (var p in anchors)
+        if (!NavMesh.SamplePosition(knownPosition, out var origin, 4f, NavMesh.AllAreas)) return list;
+        bool headingKnown = Time.time - headingTime <= 2f && heading.sqrMagnitude > .01f;
+        Vector3 reference = ReferenceDirection();
+        var best = new Vector3?[24];
+        var bestError = new float[24];
+        foreach (var a in anchors)
         {
-            Vector3 flat = Vector3.ProjectOnPlane(p - origin.position, Vector3.up);
+            Vector3 flat = Vector3.ProjectOnPlane(a - origin.position, Vector3.up);
             float d = flat.magnitude;
-            if (d < 8f || d > 30f || Mathf.Abs(p.y - origin.position.y) > 4f) continue;
+            if (d < 8f || d > 32f || Mathf.Abs(a.y - origin.position.y) > 4f) continue;
             float angle = Mathf.Atan2(flat.x, flat.z) * Mathf.Rad2Deg;
-            int bin = Mathf.Clamp(Mathf.FloorToInt((angle + 180f) / 30f), 0, 11);
-            float error = Mathf.Abs(d - FlankRadius);
-            if (best[bin] == null || error < bestError[bin]) { best[bin] = p; bestError[bin] = error; }
+            int bin = Mathf.Clamp(Mathf.FloorToInt((angle + 180f) / 30f), 0, 11) * 2 + (d < 18f ? 0 : 1);
+            float error = Mathf.Abs(d - (d < 18f ? 13f : 24f));
+            if (best[bin] == null || error < bestError[bin]) { best[bin] = a; bestError[bin] = error; }
         }
-        for (int i = 0; i < 12; i++)
+        for (int i = 0; i < best.Length; i++)
         {
             if (best[i] == null) continue;
-            Vector3 p = best[i].Value;
-            // 예상 위치에서 길로 이어져 있고 너무 돌아가지 않는 곳만 — 벽 건너편은 '옆'이 아니다
-            var fromPlayer = ComputePathFrom(sample, origin.position, p);
-            if (fromPlayer == null || Length(fromPlayer) > Vector3.Distance(origin.position, p) * 1.8f + 6f) continue;
-            list.Add(new Candidate { point = p });
+            Vector3 a = best[i].Value;
+            var route = ComputePathFrom(sample, origin.position, a);
+            if (route == null) continue;
+            route = (Vector3[])route.Clone();
+            float length = Length(route);
+            if (length > 36f || length > Vector3.Distance(origin.position, a) * 1.6f + 6f) continue;
+            // 플레이어가 가는 쪽으로 출발하는 길만(뒤로 돌아가는 곳은 플레이어가 갈 곳이 아니다). 방향을 모르면 추격자 반대쪽 기준
+            Vector3 start = RouteStartDirection(route);
+            if (Vector3.Dot(start, reference) < (headingKnown ? .2f : -.3f)) continue;
+            list.Add(new Candidate { point = a, route = route, playerEta = length / PlayerRunSpeed });
         }
         return list;
+    }
+
+    private static Vector3 RouteStartDirection(Vector3[] route)
+    {
+        for (int i = 1; i < route.Length; i++)
+        {
+            Vector3 d = Vector3.ProjectOnPlane(route[i] - route[0], Vector3.up);
+            if (d.magnitude >= 3f) return d.normalized;
+        }
+        return Vector3.ProjectOnPlane(route[route.Length - 1] - route[0], Vector3.up).normalized;
+    }
+
+    /// <summary>우회 길이 플레이어의 길과 겹치는가(목표 앞 5m는 만나는 자리라 뺀다). 겹치면 뒤따라가거나 마주 달려가는 것일 뿐이다.</summary>
+    private static bool OverlapsRoute(Vector3[] path, Vector3[] route, float radius)
+    {
+        if (route == null || route.Length < 2) return false;
+        float total = Length(path), walked = 0f;
+        for (int i = 1; i < path.Length; i++)
+        {
+            float segment = Vector3.Distance(path[i - 1], path[i]);
+            int samples = Mathf.Max(1, Mathf.CeilToInt(segment / 2f));
+            for (int k = 0; k < samples; k++)
+            {
+                float along = walked + segment * (k + .5f) / samples;
+                if (total - along < 5f) return false;
+                Vector3 point = Vector3.Lerp(path[i - 1], path[i], (k + .5f) / samples);
+                for (int j = 1; j < route.Length; j++)
+                    if (DistanceToSegment(point, route[j - 1], route[j]) < radius) return true;
+            }
+            walked += segment;
+        }
+        return false;
     }
 
     private struct FlankChoice
@@ -842,7 +930,7 @@ public class MonsterDirector : MonoBehaviour
     }
 
     /// <summary>
-    /// m이 갈 수 있는 가장 좋은 우회 목표. 조건(relax가 클수록 느슨):
+    /// m이 갈 수 있는 가장 좋은 우회 목표(갈림길 우회: 플레이어 길과 겹치지 않는 가지로, 플레이어와 같은 때 도착). 조건(relax가 클수록 느슨):
     /// ① 추격자와 플레이어 기준 70°(relax 2: 45°) 이상 벌어진 방향, ② 다른 우회와 55° 이상(relax 1부터 검사 안 함),
     /// ③ 가는 길이 플레이어 곁 5m(relax 2: 3m)를 지나지 않음 — 지나면 뒤따라가는 것일 뿐이다.
     /// 가장 빨리 닿는 곳. 지금 목표와 크게 다르면 1.5초 벌점(와리가리 방지), 선호 쪽이 아니면 3초 벌점.
@@ -883,8 +971,13 @@ public class MonsterDirector : MonoBehaviour
             float length = Length(path);
             if (length > RecruitRange * 1.3f) continue;
             if (PassesNear(path, playerAt, throughPlayer)) continue;
+            // 플레이어의 길과 다른 가지로 들어와야 한다(갈림길 우회)
+            if (OverlapsRoute(path, c.route, relax >= 2 ? 2.5f : 3.5f)) continue;
             float eta = length / FarSpeed;
-            float score = eta;
+            // 플레이어와 같은 때 도착하는 곳: 너무 늦으면(플레이어가 이미 지나감) 빼고, 이르거나 늦은 만큼 벌점
+            float late = eta - c.playerEta;
+            if (late > (relax >= 2 ? 4f : 2.5f)) continue;
+            float score = Mathf.Abs(late) * 1.5f + eta * .25f;
             if (side != 0 && SideOf(c.point) != side) score += 3f;
             if (hasCurrent && Vector3.Distance(c.point, current) > 6f) score += 1.5f;
             if (score < choice.score) { choice.score = score; choice.path = (Vector3[])path.Clone(); choice.eta = eta; }
@@ -958,6 +1051,10 @@ public class MonsterDirector : MonoBehaviour
             Vector3 bearing = Vector3.ProjectOnPlane(goal - playerAt, Vector3.up);
             if (leadDir.sqrMagnitude > 9f && bearing.sqrMagnitude > .01f && Vector3.Angle(bearing, leadDir) < 45f) return false;
         }
+        // 플레이어가 이미 지나쳤다(목표가 이동 방향 뒤쪽) — 갈림길을 놓쳤으니 다음 갈림길로
+        Vector3 ahead = Vector3.ProjectOnPlane(goal - playerAt, Vector3.up);
+        if (Time.time - headingTime <= 2f && heading.sqrMagnitude > .01f && ahead.sqrMagnitude > 1f &&
+            Vector3.Dot(ahead.normalized, heading) < -.3f) return false;
         var path = ComputePath(m, goal);
         return path != null && !PassesNear(path, playerAt, 4f);
     }
