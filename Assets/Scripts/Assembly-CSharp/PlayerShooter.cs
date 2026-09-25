@@ -81,8 +81,34 @@ public class PlayerShooter : MonoBehaviour
 	private float lastFireTime;
 	private readonly RaycastHit[] aimHits = new RaycastHit[32];
 
+	public static PlayerShooter Instance { get; private set; }
+
+	/// <summary>발사 준비 정도: 0 = 방금 쏨, 1 = 쏠 수 있음. 크로스헤어가 이 값으로 닫힌다.</summary>
+	public float Readiness => fireCooldown <= 0f ? 1f : Mathf.Clamp01((Time.time - lastFireTime) / fireCooldown);
+
+	/// <summary>
+	/// 지금 쏘면 조준점(화면 가운데가 가리키는 곳)에 닿는가. 발사는 어깨 위 기준점(firePoint)에서 나가므로
+	/// 가까운 벽 모서리가 그 사이를 막으면 조준선은 과녁 위인데 벽을 맞힌다 — 그때 false.
+	/// </summary>
+	public bool IsShotBlocked(Ray aimRay, out float aimDistance)
+	{
+		aimDistance = range;
+		if (firePoint == null) return false;
+		Vector3 aimPoint = aimRay.origin + aimRay.direction * range;
+		if (TryRaycastIgnoringSelf(aimRay, range, out RaycastHit aimHit))
+		{
+			aimPoint = aimHit.point;
+			aimDistance = aimHit.distance;
+		}
+		Vector3 path = aimPoint - firePoint.position;
+		float length = path.magnitude;
+		if (length < .5f) return false;
+		return TryRaycastIgnoringSelf(new Ray(firePoint.position, path / length), length - .35f, out _);
+	}
+
 	private void Awake()
 	{
+		Instance = this;
 		audioSource = GetComponent<AudioSource>();
 		laserLine = GetComponent<LineRenderer>();
 	}

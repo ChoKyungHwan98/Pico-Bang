@@ -95,6 +95,12 @@ public class PlayerController : MonoBehaviour, IGameResettable
 
 	private float currentXRotation;
 
+	// 좌우 시선(yaw). 카메라는 이 값을 매 프레임 그대로 쓰고, 몸은 FixedUpdate에서 MoveRotation으로 따라온다.
+	// 예전에는 보간이 켜진 리지드바디의 transform을 Update에서 직접 돌렸다 — 다음 프레임 보간이 옛 회전으로 덮어써서
+	// 돌린 양의 약 40%가 사라지고 프레임마다 역회전이 섞였다(측정 2026-09-25: 편차 24%, 220프레임 중 역회전 21번)
+	private float yaw;
+	private Vector3 pivotOffset;
+
 	private float animationSpeed;
 
 	private float speedSmoothVelocity;
@@ -120,6 +126,8 @@ public class PlayerController : MonoBehaviour, IGameResettable
 		// 렌더 프레임마다 위치가 계단식으로 튀고 그게 그대로 화면 흔들림이 된다.
 		rb.interpolation = RigidbodyInterpolation.Interpolate;
 		rb.freezeRotation = true;
+		yaw = transform.eulerAngles.y;
+		if (cameraPivot != null) pivotOffset = cameraPivot.localPosition;
 
 		ResetEffectIntensity();
 	}
@@ -161,6 +169,7 @@ public class PlayerController : MonoBehaviour, IGameResettable
 		base.transform.SetPositionAndRotation(position, rotation);
 		rb.position = position;
 		rb.rotation = rotation;
+		yaw = rotation.eulerAngles.y;
 
 		if (!rb.isKinematic)
 		{
@@ -186,6 +195,7 @@ public class PlayerController : MonoBehaviour, IGameResettable
 		if (cameraPivot != null)
 		{
 			cameraPivot.localRotation = Quaternion.identity;
+			cameraPivot.localPosition = pivotOffset;
 		}
 		if (animator != null)
 		{
@@ -266,6 +276,8 @@ public class PlayerController : MonoBehaviour, IGameResettable
 	{
 		if (!(GameFlowManager.Instance != null) || GameFlowManager.Instance.IsGameRunning)
 		{
+			// 몸은 물리로 돌린다 — 보간이 부드럽게 이어 준다
+			rb.MoveRotation(Quaternion.Euler(0f, yaw, 0f));
 			CheckStatus();
 			HandleMovement();
 			UpdateAnimation();
@@ -295,14 +307,39 @@ public class PlayerController : MonoBehaviour, IGameResettable
 		float sens = GameSettings.MouseSensitivity * lookSensitivityScale;
 		if (GameSettings.InvertY) { lookDelta.y = -lookDelta.y; }
 
-		base.transform.Rotate(Vector3.up * (lookDelta.x * sens));
-
+		yaw += lookDelta.x * sens + DebugYawRate * Time.deltaTime;
 		currentXRotation -= lookDelta.y * sens * verticalSensitivityRatio;
 		currentXRotation = Mathf.Clamp(currentXRotation, minXAngle, maxXAngle);
-		if (cameraPivot != null)
-		{
-			cameraPivot.localRotation = Quaternion.Euler(currentXRotation, 0f, 0f);
-		}
+		ApplyCameraPivot();
+	}
+
+	/// <summary>테스트용: 마우스 입력 대신 초당 이만큼(도) 좌우로 돈다. Update의 HandleLook 경로를 그대로 탄다.</summary>
+	public static float DebugYawRate;
+
+	/// <summary>테스트용: 마우스 입력 없이 좌우로 degrees만큼 돌린다(HandleLook과 같은 경로).</summary>
+	public void DebugApplyLook(float degrees)
+	{
+		yaw += degrees;
+		ApplyCameraPivot();
+	}
+
+	/// <summary>
+	/// 카메라 축은 몸의 보간 회전을 따라가지 않고 시선 값(yaw·pitch)을 그대로 쓴다.
+	/// 위치도 몸의 보간 위치 + 시선 방향 기준 어깨 오프셋 — 몸이 한 물리 프레임 늦게 돌아도 카메라는 흔들리지 않는다.
+	/// </summary>
+	private void ApplyCameraPivot()
+	{
+		if (cameraPivot == null) return;
+		Quaternion yawRotation = Quaternion.Euler(0f, yaw, 0f);
+		cameraPivot.SetPositionAndRotation(base.transform.position + yawRotation * pivotOffset,
+			Quaternion.Euler(currentXRotation, yaw, 0f));
+	}
+
+	private void LateUpdate()
+	{
+		// 보간이 몸의 위치·회전을 바꾼 뒤 카메라 축을 다시 맞춘다
+		if (GameFlowManager.Instance != null && !GameFlowManager.Instance.IsGameRunning) return;
+		ApplyCameraPivot();
 	}
 
 	private void HandleMovement()
@@ -311,7 +348,9 @@ public class PlayerController : MonoBehaviour, IGameResettable
 		if (input.magnitude < 0.1f) input = Vector2.zero;
 		float targetSpeed = sprintAction != null && sprintAction.action.ReadValue<float>() > 0f
 			? sprintSpeed : walkSpeed;
-		Vector3 direction = base.transform.forward * input.y + base.transform.right * input.x;
+		// 이동 방향은 몸이 아니라 시선 기준 — 몸은 한 물리 프레임 늦게 돈다
+		Quaternion look = Quaternion.Euler(0f, yaw, 0f);
+		Vector3 direction = look * Vector3.forward * input.y + look * Vector3.right * input.x;
 		if (direction.sqrMagnitude > 1f) direction.Normalize();
 		Vector3 desired = direction * targetSpeed * input.magnitude;
 		float rate = desired.sqrMagnitude > planarVelocity.sqrMagnitude ? acceleration : deceleration;
