@@ -206,6 +206,9 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("인원 초과로 구역에 돌아가는 몬스터는 이 시간(초) 동안 멀리 보이는 플레이어를 무시한다(8m 안은 예외)")]
 	public float benchSeconds = 5f;
 
+	[Tooltip("협공 추격자가 플레이어에게 다가가는 최소 거리(m). 여기서 멈추고 추격자와 겹치지 않는 옆쪽으로 벌어져 에워싼다 — 한 덩어리로 붙지 않게")]
+	public float assistSpacing = 3.2f;
+
 	[Header("7. Jump (단차 이동)")]
 	public float jumpDuration = 0.5f;
 
@@ -621,7 +624,8 @@ public class MonsterAI : MonoBehaviour
 			lostSight = false;
 			checkingCorner = false;
 			lastKnownPos = player.position;
-			agent.SetDestination(player.position);
+			// 협공이면 추격자와 겹치지 않는 옆자리로 — 추격자만 몸으로 부딪힌다
+			agent.SetDestination(Director != null && Director.TryGetSpacingSlot(this, out Vector3 slot) ? slot : player.position);
 			return;
 		}
 		if (!lostSight) BeginLostSight();

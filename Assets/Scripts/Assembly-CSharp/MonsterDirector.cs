@@ -58,6 +58,7 @@ public class MonsterDirector : MonoBehaviour
     private const float PlanInterval = .4f;
     private const float FlankReplanInterval = 1f;
     private const float CloseEncounter = 8f;
+    private const float BrawlDistance = 12f;
 
     private readonly Dictionary<MonsterAI, Role> roles = new Dictionary<MonsterAI, Role>();
     private readonly Dictionary<MonsterAI, float> benchUntil = new Dictionary<MonsterAI, float>();
@@ -229,13 +230,22 @@ public class MonsterDirector : MonoBehaviour
             // 내보낼 몬스터: 추격자가 아니고 지금 플레이어를 보고 있지 않은 몬스터 중 가장 먼 몬스터.
             // 보고 있는 몬스터를 돌려보내면 '보면서 돌아서는' 모습이 된다
             MonsterAI farthest = FarthestNonLead(true);
-            if (farthest == null || DistanceToPlayer(farthest) <= distance)
+            if (farthest != null && DistanceToPlayer(farthest) > distance && DistanceToPlayer(farthest) > BrawlDistance)
             {
-                Decide(m, "join_denied_full", "봤지만 인원 " + TeamSize + "마리 가득(내보낼 수 있는 몬스터가 나보다 가까움) → 순찰 계속", 2f);
+                Decide(farthest, "cap_release", "새로 본 " + Short(m) + "가 더 가까움 → 인원 초과, 못 보고 있는 가장 먼 몬스터 → 빈 구역으로");
+                SendHome(farthest, true);
+            }
+            else if (distance <= CloseEncounter)
+            {
+                // 코앞에서 본 몬스터가 보면서 돌아서면 안 된다(09-25 F8 04:01 B, 3.7m) — 인원이 넘쳐도 합류한다.
+                // 모두 가까이 붙어 싸우는 동안에는 EnforceCap도 누구를 돌려보내지 않는다
+                Decide(m, "join_close_over_cap", "코앞(" + distance.ToString("F0") + "m)에서 봄 → 인원 가득이어도 합류", 2f);
+            }
+            else
+            {
+                Decide(m, "join_denied_full", "봤지만 인원 " + TeamSize + "마리 가득(내보낼 몬스터가 모두 가까이 붙어 싸우는 중) → 순찰 계속", 2f);
                 return false;
             }
-            Decide(farthest, "cap_release", "새로 본 " + Short(m) + "가 더 가까움 → 인원 초과, 못 보고 있는 가장 먼 몬스터 → 빈 구역으로");
-            SendHome(farthest, true);
         }
         Role role = lead == null ? Role.Lead : Role.Assist;
         SetRole(m, role);
@@ -672,6 +682,9 @@ public class MonsterDirector : MonoBehaviour
         {
             var farthest = FarthestNonLead(true) ?? FarthestNonLead();
             if (farthest == null) break;
+            // 모두 BrawlDistance(12m) 안에서 붙어 싸우는 중이면 잠시 넘쳐도 둔다 — 코앞 몬스터가 돌아서는 모습이 더 나쁘다.
+            // 한 마리라도 떨어지면 그 몬스터부터 돌려보낸다
+            if (DistanceToPlayer(farthest) <= BrawlDistance) break;
             Decide(farthest, "cap_release", "사냥 인원 " + TeamSize + "마리 초과, 가장 멂 → 빈 구역으로");
             SendHome(farthest, true);
         }
@@ -1183,6 +1196,47 @@ public class MonsterDirector : MonoBehaviour
         Vector3 toB = Vector3.ProjectOnPlane(b.transform.position - p, Vector3.up);
         if (toB.magnitude < 2f || toA.magnitude < .01f) return false;
         return Vector3.Dot(toA.normalized, toB.normalized) > .7f && toA.magnitude >= toB.magnitude - 1f;
+    }
+
+    /// <summary>
+    /// 협공 추격자의 자리: 플레이어에게서 assistSpacing만큼 떨어진 둘레 한 점.
+    /// 추격자 방향과 70° 이상, 다른 협공과 50° 이상 벌어지게 돌린다 — 한 덩어리가 아니라 둘러싼다.
+    /// 멀리(assistSpacing의 2배 밖) 있으면 false — 그냥 곧장 다가간다.
+    /// </summary>
+    public bool TryGetSpacingSlot(MonsterAI m, out Vector3 slot)
+    {
+        slot = Vector3.zero;
+        if (player == null || RoleOf(m) != Role.Assist) return false;
+        float spacing = Settings != null ? Mathf.Max(1f, Settings.assistSpacing) : 3.2f;
+        Vector3 p = player.position;
+        Vector3 dir = Vector3.ProjectOnPlane(m.transform.position - p, Vector3.up);
+        if (dir.magnitude > spacing * 2f) return false;
+        dir = dir.sqrMagnitude > .01f ? dir.normalized : Vector3.ProjectOnPlane(m.transform.right, Vector3.up).normalized;
+        var taken = new List<Vector3>();
+        if (lead != null && lead != m) taken.Add(Vector3.ProjectOnPlane(lead.transform.position - p, Vector3.up).normalized);
+        foreach (var pair in roles)
+            if (pair.Key != null && pair.Key != m && pair.Key != lead && pair.Value == Role.Assist)
+                taken.Add(Vector3.ProjectOnPlane(pair.Key.transform.position - p, Vector3.up).normalized);
+        for (int step = 0; step < 4; step++)
+        {
+            bool clash = false;
+            foreach (var t in taken)
+            {
+                if (t.sqrMagnitude < .01f) continue;
+                float need = t == taken[0] && lead != null && lead != m ? 70f : 50f;
+                float angle = Vector3.SignedAngle(t, dir, Vector3.up);
+                if (Mathf.Abs(angle) < need)
+                {
+                    dir = Quaternion.Euler(0f, (angle >= 0f ? 1f : -1f) * (need - Mathf.Abs(angle) + 5f), 0f) * dir;
+                    clash = true;
+                }
+            }
+            if (!clash) break;
+        }
+        Vector3 wanted = p + dir * spacing;
+        if (!NavMesh.SamplePosition(wanted, out var hit, 1.5f, NavMesh.AllAreas)) return false;
+        slot = hit.position;
+        return true;
     }
 
     private float DistanceToPlayer(MonsterAI m)
