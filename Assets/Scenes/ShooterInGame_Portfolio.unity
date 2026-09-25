@@ -62462,13 +62462,14 @@ MonoBehaviour:
   lookSensitivityScale: 1
   verticalSensitivityRatio: 1
   minXAngle: -55
-  maxXAngle: 50
+  maxXAngle: 35
   groundLayer:
     serializedVersion: 2
     m_Bits: 128
   rayLength: 0.2
   rayOriginOffset: {x: 0, y: 0.1, z: 0}
   runThreshold: 8
+  sprintCameraDrop: 0.12
   isGrounded: 0
   isJumping: 0
   isFalling: 0
@@ -67093,10 +67094,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ShoulderCameraRig
   normalDistance: 2.8
-  sprintExtraDistance: 0.35
+  sprintExtraDistance: 0.25
   downwardDistanceBonus: 0.45
-  maxDownwardBoomPitch: 22
-  sprintFieldOfView: 66
+  maxDownwardBoomPitch: 40
+  sprintFieldOfView: 74
   squeezedFieldOfView: 72
   distanceSmoothTime: 0.12
   cameraRadius: 0.28

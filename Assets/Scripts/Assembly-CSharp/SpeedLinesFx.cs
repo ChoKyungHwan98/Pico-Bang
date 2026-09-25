@@ -16,7 +16,7 @@ public sealed class SpeedLinesFx : MonoBehaviour
     private static readonly int IntensityId = Shader.PropertyToID("_FullscreenIntensity");
 
     [Tooltip("달리기 최대일 때 속도선 세기(0~1)")]
-    [Range(0f, 1f)] public float maxIntensity = .85f;
+    [Range(0f, 1f)] public float maxIntensity = 1f;
 
     [Tooltip("세기가 올라가는/내려가는 속도(초당)")]
     public float riseSpeed = 3f, fallSpeed = 4f;

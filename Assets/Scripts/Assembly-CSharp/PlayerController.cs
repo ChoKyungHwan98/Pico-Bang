@@ -57,6 +57,10 @@ public class PlayerController : MonoBehaviour, IGameResettable
 	[SerializeField]
 	private float runThreshold = 9f;
 
+	[Tooltip("달릴 때 카메라 축이 내려가는 높이(m). 낮을수록 바닥이 빨리 흘러가 속도감이 난다")]
+	[SerializeField]
+	private float sprintCameraDrop = .12f;
+
 	[Header("State Info (Read Only)")]
 	[SerializeField]
 	private bool isGrounded;
@@ -115,7 +119,10 @@ public class PlayerController : MonoBehaviour, IGameResettable
 
 	// Sprint camera distance and field of view still use this 0-1 value.
 	private float speedEffectIntensity;
-	public float SprintVisualStrength => Mathf.Clamp01(speedEffectIntensity);
+	public float SprintVisualStrength => DebugSprintVisual > 0f ? DebugSprintVisual : Mathf.Clamp01(speedEffectIntensity);
+
+	/// <summary>테스트·캡처용: 0보다 크면 달리기 연출 세기를 이 값으로 고정한다.</summary>
+	public static float DebugSprintVisual;
 
 	private void Awake()
 	{
@@ -331,7 +338,8 @@ public class PlayerController : MonoBehaviour, IGameResettable
 	{
 		if (cameraPivot == null) return;
 		Quaternion yawRotation = Quaternion.Euler(0f, yaw, 0f);
-		cameraPivot.SetPositionAndRotation(base.transform.position + yawRotation * pivotOffset,
+		Vector3 offset = pivotOffset + Vector3.down * sprintCameraDrop * SprintVisualStrength;
+		cameraPivot.SetPositionAndRotation(base.transform.position + yawRotation * offset,
 			Quaternion.Euler(currentXRotation, yaw, 0f));
 	}
 
