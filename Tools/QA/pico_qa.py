@@ -300,9 +300,57 @@ def cmd_summary(tr):
     print('\n의심 장면 %d개 (화면 타이머 기준):' % len(found))
     for t, clock, who, text in found:
         print('  %s  %-6s %s' % (clock, who, text))
+    zone_report(tr)
     marks = [e for e in tr.events if e['type'] == 'qa_mark']
     if marks:
         print('\nF8 표시:', ', '.join(e['clock'] for e in marks))
+
+
+# 구역 기록(zone 이벤트)이 없는 옛 기록용: 포트폴리오 씬 구역 (2026-09-25 씬 값)
+FALLBACK_ZONES = {
+    'Assets/Scenes/ShooterInGame_Portfolio.unity': [
+        ('Zone_A', 44.6, 74.7, 50), ('Zone_B', -85.2, 22.9, 50), ('Zone_C', 82.1, -10.0, 50), ('Zone_D', 5.5, -76.2, 50)],
+}
+
+
+def zones_of(tr):
+    zs = []
+    for e in tr.events:
+        if e['type'] == 'zone':
+            r = 50.0
+            for part in e.get('detail', '').split(';'):
+                if part.startswith('radius='):
+                    r = float(part[7:])
+            zs.append((e['actor'], e['position']['x'], e['position']['z'], r))
+    return zs or FALLBACK_ZONES.get(tr.header.get('scene', ''), [])
+
+
+def zone_report(tr):
+    """구역마다: 사냥에 안 낀 몬스터가 안에 있는 시간(지킴), 플레이어만 있는 시간, 둘 다 없는 시간(빔)."""
+    zs = zones_of(tr)
+    if not zs or not tr.frames:
+        return
+    guarded, empty, with_player = Counter(), Counter(), Counter()
+    crowd = 0
+    for f in tr.frames:
+        p = f['player']['position']
+        free = [m for m in f['monsters'] if not m.get('role') and m['state'] in ('Patrol', 'Return', 'Idle', 'Investigate')]
+        for name, x, z, r in zs:
+            c = {'x': x, 'z': z}
+            if any(planar(m['position'], c) <= r for m in free):
+                guarded[name] += 1
+            elif planar(p, c) <= r:
+                with_player[name] += 1
+            else:
+                empty[name] += 1
+        if any(planar(free[i]['position'], free[j]['position']) < 40
+               for i in range(len(free)) for j in range(i + 1, len(free))):
+            crowd += 1
+    n = float(len(tr.frames))
+    print('\n구역 (지킴 = 사냥에 안 낀 몬스터가 안에 있음 / 빔 = 몬스터도 플레이어도 없음):')
+    for name, x, z, r in zs:
+        print('  %-7s 지킴 %3.0f%%  플레이어만 %3.0f%%  빔 %3.0f%%' % (name, 100 * guarded[name] / n, 100 * with_player[name] / n, 100 * empty[name] / n))
+    print('  순찰 몬스터끼리 40m 안에 붙어 있던 시간 %.0f%%' % (100 * crowd / n))
 
 
 def cmd_at(tr, clock, window):

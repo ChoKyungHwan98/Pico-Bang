@@ -178,8 +178,8 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("우회 목표: 예상 위치에서 이 거리(m) 떨어진 옆·앞 지점")]
 	public float flankRadius = 16f;
 
-	[Tooltip("우회 몬스터로 부를 수 있는 최대 길 거리(m). 이보다 멀면 부르지 않는다")]
-	public float flankRecruitRange = 130f;
+	[Tooltip("우회 몬스터로 부를 수 있는 최대 거리(m). 이보다 먼 몬스터는 자기 구역을 지킨다 — 5마리가 맵 곳곳에 있어야 여러 마리처럼 보인다")]
+	public float flankRecruitRange = 90f;
 
 	[Tooltip("우회 몬스터가 이 거리(m) 안에서 플레이어를 보면 협공 추격으로 바뀐다")]
 	public float flankEngageDistance = 18f;

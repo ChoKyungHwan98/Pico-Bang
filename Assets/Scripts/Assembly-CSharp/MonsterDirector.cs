@@ -65,6 +65,7 @@ public class MonsterDirector : MonoBehaviour
     private readonly Dictionary<MonsterAI, int> flankMisses = new Dictionary<MonsterAI, int>();
     private readonly Dictionary<MonsterAI, float> nextFlankPlan = new Dictionary<MonsterAI, float>();
     private readonly Dictionary<MonsterAI, int> preferredSide = new Dictionary<MonsterAI, int>();
+    private readonly Dictionary<MonsterAI, float> flankInvalidSince = new Dictionary<MonsterAI, float>();
     private readonly Dictionary<MonsterAI, RouteInfo> routes = new Dictionary<MonsterAI, RouteInfo>();
     private readonly Dictionary<string, float> decisionThrottle = new Dictionary<string, float>();
     private readonly List<MonsterAI> team = new List<MonsterAI>();
@@ -87,7 +88,7 @@ public class MonsterDirector : MonoBehaviour
     private float knowledgeTime = float.NegativeInfinity, sightTime = float.NegativeInfinity, headingTime = float.NegativeInfinity;
     private Vector3 headingSamplePos;
     private float headingSampleTime = float.NegativeInfinity;
-    private float nextPlan;
+    private float nextPlan, nextSpread;
     private float leadChangedAt = float.NegativeInfinity;   // 추격자가 바뀐 시각 — 2초 안에 다시 바꾸지 않는다
     private string summary = "순찰 중";
     private int huntCount;
@@ -284,13 +285,20 @@ public class MonsterDirector : MonoBehaviour
     /// <summary>우회 지점에 도착해 둘러봤지만 못 찾았다.</summary>
     public void ReportFlankMissed(MonsterAI m)
     {
-        int misses = (flankMisses.TryGetValue(m, out int n) ? n : 0) + 1;
-        flankMisses[m] = misses;
         if (!hunting || !roles.ContainsKey(m))
         {
             SendHome(m, false);
             return;
         }
+        // 무리가 플레이어 위치를 2초 안에 알았다면 '못 찾음'이 아니라 먼저 도착한 것이다 — 다음 지점만 받는다
+        if (Time.time - knowledgeTime <= 2f)
+        {
+            Decide(m, "flank_early", "우회 지점에 먼저 도착 → 플레이어 앞쪽 다음 지점", 1.5f);
+            AssignFlank(m, true);
+            return;
+        }
+        int misses = (flankMisses.TryGetValue(m, out int n) ? n : 0) + 1;
+        flankMisses[m] = misses;
         if (misses >= MaxMisses)
         {
             Decide(m, "flank_give_up", "우회 " + misses + "번 연속 못 찾음 → 빈 구역으로");
@@ -403,7 +411,7 @@ public class MonsterDirector : MonoBehaviour
         hasSighting = false;
         knowledgeTime = sightTime = headingTime = headingSampleTime = float.NegativeInfinity;
         heading = Vector3.zero;
-        benchUntil.Clear(); decisionThrottle.Clear();
+        benchUntil.Clear(); decisionThrottle.Clear(); flankInvalidSince.Clear();
         zones.Clear();
         summary = "순찰 중";
     }
@@ -469,6 +477,7 @@ public class MonsterDirector : MonoBehaviour
         if (GameFlowManager.Instance != null && !GameFlowManager.Instance.IsGameRunning) return;
         if (player == null) player = GameObject.FindGameObjectWithTag("Player")?.transform;
         if (zones.Count == 0) BuildZones();
+        if (Time.time >= nextSpread) { nextSpread = Time.time + 4f; SpreadPatrols(); }
         if (!hunting) return;
         if (Time.time - knowledgeTime > Memory) { EndHunt(true); return; }
         if (Time.time >= nextPlan) Plan();
@@ -609,7 +618,8 @@ public class MonsterDirector : MonoBehaviour
                 if (QueuesBehind(m, other) && Vector3.Distance(m.transform.position, other.transform.position) <= QueueDistance)
                 { front = other; break; }
             }
-            if (front == null || DistanceToPlayer(m) <= CloseEncounter * .5f) { queueSince.Remove(m); continue; }
+            // 플레이어에게 붙은(4m) 협공은 봐준다 — 단, 앞 추격자와 같은 쪽에 겹쳐 있으면 그것도 줄줄이다(09-25 F8 02:56)
+            if (front == null || (DistanceToPlayer(m) <= CloseEncounter * .5f && !QueuesBehind(m, front))) { queueSince.Remove(m); continue; }
             if (!queueSince.TryGetValue(m, out float since)) { queueSince[m] = Time.time; continue; }
             if (Time.time - since < QueueSeconds) continue;
             queueSince.Remove(m);
@@ -654,6 +664,11 @@ public class MonsterDirector : MonoBehaviour
                 if (benchUntil.TryGetValue(m, out float until) && Time.time < until) continue;
                 if (Vector3.Distance(m.transform.position, knownPosition) > RecruitRange) continue;
                 if (!TryChooseFlank(m, candidates, 1, out var choice)) continue;
+                // 구역을 비우지 않는 몬스터를 먼저: 전역 몬스터(구역 없음), 플레이어가 자기 구역 안에 있는 몬스터.
+                // 먼 구역 몬스터를 끌어오면 그 구역이 비어 맵이 한쪽으로 몰린다
+                float drain = m.role == MonsterAI.MonsterRole.Global_Stalker || m.useGlobalNavMesh ? -1f
+                    : m.zoneCenter != null && Vector3.Distance(knownPosition, m.zoneCenter.position) <= m.zoneRadius + 15f ? 0f : 2.5f;
+                choice.score += drain;
                 if (choice.score < bestChoice.score) { best = m; bestChoice = choice; }
             }
             if (best == null) break;
@@ -838,12 +853,21 @@ public class MonsterDirector : MonoBehaviour
     {
         nextFlankPlan[m] = Time.time + FlankReplanInterval;
         if (!m.CanTakeOrders) return;
+        bool hasCurrent = !force && m.CurrentState == MonsterAI.State.Flank;
+        if (hasCurrent)
+        {
+            // 목표가 한 번 어긋났다고 바로 바꾸지 않는다 — 2초 넘게 계속 어긋나야 바꾼다(좌우 와리가리 방지)
+            if (FlankStillValid(m)) { flankInvalidSince.Remove(m); return; }
+            if (!flankInvalidSince.TryGetValue(m, out float since)) { flankInvalidSince[m] = Time.time; return; }
+            if (Time.time - since < 2f) return;
+        }
+        flankInvalidSince.Remove(m);
+        // 새 목표는 되도록 지금 가던 쪽에서 — 쪽을 바꾸면 몸을 돌려 반대로 뛰게 된다
+        if (hasCurrent && !preferredSide.ContainsKey(m)) preferredSide[m] = SideOf(m.FlankGoal);
         var candidates = BuildCandidates(m, PredictedPosition());
         FlankChoice choice = default;
         bool found = false;
         for (int relax = 0; relax < 3 && !found; relax++) found = TryChooseFlank(m, candidates, relax, out choice);
-        bool hasCurrent = !force && m.CurrentState == MonsterAI.State.Flank;
-        if (hasCurrent && FlankStillValid(m)) return;
         if (!found)
         {
             if (hasCurrent) return;
@@ -870,13 +894,13 @@ public class MonsterDirector : MonoBehaviour
         Vector3 goal = m.FlankGoal;
         Vector3 predicted = PredictedPosition();
         float fromPredicted = Vector3.Distance(goal, predicted);
-        if (fromPredicted < 4f || fromPredicted > 32f) return false;
+        if (fromPredicted < 4f || fromPredicted > 40f) return false;
         Vector3 playerAt = knownPosition;
         if (lead != null && lead != m)
         {
             Vector3 leadDir = Vector3.ProjectOnPlane(lead.transform.position - playerAt, Vector3.up);
             Vector3 bearing = Vector3.ProjectOnPlane(goal - playerAt, Vector3.up);
-            if (leadDir.sqrMagnitude > 9f && bearing.sqrMagnitude > .01f && Vector3.Angle(bearing, leadDir) < 60f) return false;
+            if (leadDir.sqrMagnitude > 9f && bearing.sqrMagnitude > .01f && Vector3.Angle(bearing, leadDir) < 45f) return false;
         }
         var path = ComputePath(m, goal);
         return path != null && !PassesNear(path, playerAt, 4f);
@@ -917,6 +941,8 @@ public class MonsterDirector : MonoBehaviour
         {
             if (m == null || m.role != MonsterAI.MonsterRole.Zone_Defender || m.useGlobalNavMesh || m.OriginalZone == null) continue;
             zones.Add(new Zone { center = m.OriginalZone, radius = m.OriginalZoneRadius, owner = m });
+            PlaytestRecorder.Record("zone", m.OriginalZone.name.Replace("_Home", ""), m.OriginalZone.position,
+                "radius=" + m.OriginalZoneRadius.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + ";owner=" + m.name);
         }
     }
 
@@ -936,32 +962,114 @@ public class MonsterDirector : MonoBehaviour
             m.CommandPatrol();
             return;
         }
-        Zone best = null;
-        float bestDistance = float.PositiveInfinity;
-        foreach (var z in zones)
-        {
-            bool covered = z.owner != null && z.owner != m && !roles.ContainsKey(z.owner) &&
-                (z.owner.CurrentState == MonsterAI.State.Patrol || z.owner.CurrentState == MonsterAI.State.Return || z.owner.CurrentState == MonsterAI.State.Idle);
-            if (covered) continue;
-            float d = Vector3.Distance(m.transform.position, z.center.position);
-            if (d < bestDistance) { bestDistance = d; best = z; }
-        }
+        Zone best = BestEmptyZone(m, out string why);
         if (best == null)
         {
             best = zones.Find(z => z.owner == m);
             if (best == null) { m.CommandPatrol(); return; }
+            why = "빈 구역 없음";
         }
-        foreach (var z in zones) if (z.owner == m && z != best) z.owner = null;
-        var displaced = best.owner;
-        best.owner = m;
-        if (displaced != null && displaced != m)
-        {
-            // 밀려난 주인(사냥 중)은 돌아올 때 다시 가장 가까운 빈 구역을 고른다
-        }
+        AssignZone(m, best);
         bool inside = Vector3.Distance(m.transform.position, best.center.position) <= best.radius;
-        m.CommandReturn(best.center, best.radius);
         string zoneName = best.center.name.Replace("_Home", "");
-        Decide(m, "go_home", (best.center == m.OriginalZone ? "자기 구역" : "가장 가까운 빈 구역(" + zoneName + ")") + "으로 복귀" + (inside ? " · 이미 안" : ""));
+        Decide(m, "go_home", (best.center == m.OriginalZone ? "자기 구역" : "빈 구역 " + zoneName) + "으로 복귀 · " + why + (inside ? " · 이미 안" : ""));
+    }
+
+    /// <summary>구역 주인을 m으로 바꾸고 그 구역으로 보낸다.</summary>
+    private void AssignZone(MonsterAI m, Zone zone)
+    {
+        foreach (var z in zones) if (z.owner == m && z != zone) z.owner = null;
+        zone.owner = m;
+        m.CommandReturn(zone.center, zone.radius);
+    }
+
+    /// <summary>그 구역을 순찰 중인(사냥에 안 낀) 주인이 있는가.</summary>
+    private bool IsCovered(Zone z, MonsterAI except)
+    {
+        return z.owner != null && z.owner != except && !roles.ContainsKey(z.owner) && !z.owner.IsInStun &&
+            (z.owner.CurrentState == MonsterAI.State.Patrol || z.owner.CurrentState == MonsterAI.State.Return || z.owner.CurrentState == MonsterAI.State.Idle);
+    }
+
+    /// <summary>
+    /// 5마리가 여러 마리처럼 보이게 — 돌아갈 빈 구역은 "가까운 곳"이 아니라 "다른 순찰 몬스터에게서 먼 곳".
+    /// 점수 = 가장 가까운 다른 순찰 몬스터(와 그 구역)까지 거리 − 가는 거리 × 0.3. 플레이어가 있는 구역은 사냥 팀이 맡으니 뒤로 미룬다.
+    /// </summary>
+    private Zone BestEmptyZone(MonsterAI m, out string why)
+    {
+        why = "";
+        Zone best = null;
+        float bestScore = float.NegativeInfinity, bestSpread = 0f;
+        Vector3 p = player != null ? player.position : knownPosition;
+        foreach (var z in zones)
+        {
+            if (IsCovered(z, m)) continue;
+            float spread = SpreadFrom(z.center.position, m);
+            float travel = Vector3.Distance(m.transform.position, z.center.position);
+            float score = Mathf.Min(spread, 150f) - travel * .3f;
+            if (hunting && Vector3.Distance(p, z.center.position) < z.radius) score -= 60f;
+            if (score > bestScore) { bestScore = score; best = z; bestSpread = spread; }
+        }
+        if (best != null) why = "다른 순찰 몬스터와 " + bestSpread.ToString("F0") + "m 떨어진 곳";
+        return best;
+    }
+
+    /// <summary>point에서 가장 가까운 '다른 순찰 몬스터'(위치와 맡은 구역 중심)까지 거리.</summary>
+    private float SpreadFrom(Vector3 point, MonsterAI except)
+    {
+        float nearest = 999f;
+        foreach (var o in MonsterAI.activeMonsters)
+        {
+            if (o == null || o == except || roles.ContainsKey(o) || o.IsInStun) continue;
+            var s = o.CurrentState;
+            if (s != MonsterAI.State.Patrol && s != MonsterAI.State.Return && s != MonsterAI.State.Idle) continue;
+            nearest = Mathf.Min(nearest, Vector3.Distance(point, o.transform.position));
+            if (o.zoneCenter != null && !o.useGlobalNavMesh) nearest = Mathf.Min(nearest, Vector3.Distance(point, o.zoneCenter.position));
+        }
+        return nearest;
+    }
+
+    /// <summary>
+    /// 구역 퍼뜨리기(4초마다, 사냥 중에도): 순찰 몬스터 둘이 가까이(40m) 붙어 있고 비어 있는 구역이 있으면,
+    /// 그 구역에 더 가까운 쪽을 빠르게(복귀 속도) 옮긴다. 플레이어를 보고 있는 몬스터는 옮기지 않는다.
+    /// </summary>
+    private void SpreadPatrols()
+    {
+        if (zones.Count == 0) return;
+        var free = new List<MonsterAI>();
+        foreach (var m in MonsterAI.activeMonsters)
+        {
+            if (m == null || roles.ContainsKey(m) || m.IsInStun || m.IsSeeingPlayer || m.useGlobalNavMesh ||
+                m.role != MonsterAI.MonsterRole.Zone_Defender || !m.CanTakeOrders) continue;
+            if (m.CurrentState != MonsterAI.State.Patrol) continue;
+            free.Add(m);
+        }
+        Vector3 p = player != null ? player.position : knownPosition;
+        foreach (var z in zones)
+        {
+            if (IsCovered(z, null)) continue;
+            if (hunting && Vector3.Distance(p, z.center.position) < z.radius) continue;
+            MonsterAI mover = null;
+            float moverDistance = float.PositiveInfinity;
+            foreach (var a in free)
+            {
+                bool crowded = false;
+                foreach (var b in MonsterAI.activeMonsters)
+                {
+                    // 붙어 있는 상대: 다른 순찰 몬스터나 전역 몬스터(사냥에 안 낀). 옮기는 쪽은 구역 몬스터만
+                    if (b == null || a == b || roles.ContainsKey(b) || b.IsInStun) continue;
+                    if (!free.Contains(b) && !(b.useGlobalNavMesh && b.CurrentState == MonsterAI.State.Patrol)) continue;
+                    if (Vector3.Distance(a.transform.position, b.transform.position) < 40f) { crowded = true; break; }
+                }
+                if (!crowded) continue;
+                float d = Vector3.Distance(a.transform.position, z.center.position);
+                if (d < moverDistance) { moverDistance = d; mover = a; }
+            }
+            if (mover == null) continue;
+            free.Remove(mover);
+            AssignZone(mover, z);
+            Decide(mover, "zone_spread", "다른 순찰 몬스터와 붙어 있음, " + z.center.name.Replace("_Home", "") + " 비어 있음 → 빠르게 이동 (" + moverDistance.ToString("F0") + "m)");
+            return;   // 한 번에 한 마리 — 다음 검사에서 다시 본다
+        }
     }
 
     // ────────────────────────────────────────────────
@@ -986,6 +1094,7 @@ public class MonsterDirector : MonoBehaviour
         queueSince.Remove(m);
         nextFlankPlan.Remove(m);
         preferredSide.Remove(m);
+        flankInvalidSince.Remove(m);
     }
 
     private MonsterAI FarthestNonLead(bool skipSeeing = false)
