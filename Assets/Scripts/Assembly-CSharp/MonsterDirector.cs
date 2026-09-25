@@ -66,6 +66,7 @@ public class MonsterDirector : MonoBehaviour
     private readonly Dictionary<MonsterAI, float> nextFlankPlan = new Dictionary<MonsterAI, float>();
     private readonly Dictionary<MonsterAI, int> preferredSide = new Dictionary<MonsterAI, int>();
     private readonly Dictionary<MonsterAI, float> flankInvalidSince = new Dictionary<MonsterAI, float>();
+    private readonly Dictionary<MonsterAI, float> flankSince = new Dictionary<MonsterAI, float>();   // 우회 역할을 맡은 시각
     private readonly Dictionary<MonsterAI, RouteInfo> routes = new Dictionary<MonsterAI, RouteInfo>();
     private readonly Dictionary<string, float> decisionThrottle = new Dictionary<string, float>();
     private readonly List<MonsterAI> team = new List<MonsterAI>();
@@ -81,7 +82,7 @@ public class MonsterDirector : MonoBehaviour
     // 우회 후보로 쓰는 걸을 수 있는 지점: NavMesh 삼각형 중심을 6m 격자로 솎은 것
     private readonly List<Vector3> anchors = new List<Vector3>();
 
-    private MonsterAI lead, spotter, global;
+    private MonsterAI lead, spotter, global, noiseChecker;
     private Transform player;
     private bool hunting, hasSighting;
     private Vector3 knownPosition, sightPosition, heading;
@@ -219,7 +220,7 @@ public class MonsterDirector : MonoBehaviour
         float distance = DistanceToPlayer(m);
         if (benchUntil.TryGetValue(m, out float until) && Time.time < until && distance > CloseEncounter)
         {
-            Decide(m, "join_denied_bench", "방금 인원 초과로 돌아가는 중 → 합류 안 함", 2f);
+            Decide(m, "join_denied_bench", "방금 팀에서 빠져 돌아가는 중 → 잠시 합류 안 함", 2f);
             return false;
         }
         if (!hunting) StartHunt(m.transform.position);
@@ -381,22 +382,33 @@ public class MonsterDirector : MonoBehaviour
         if (ignored || listeners.Count == 0) return;
         PlaytestRecorder.Record("noise_evidence", "player", position,
             kind + ":listeners=" + listeners.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        bool wasHunting = hunting;
-        Remember(position, false, null);
-        if (wasHunting) return;
+        // 사냥 팀이 들으면 위치 힌트만 새로 고친다(놓친 추격자가 소리 쪽으로 간다). 끈질김은 채우지 않는다 —
+        // 플레이어는 늘 쏘므로, 소리로 끈질김을 채우면 한 번 붙은 추격자를 절대 떨칠 수 없다
+        bool teamHeard = false;
+        foreach (var m in listeners) if (roles.ContainsKey(m)) { teamHeard = true; break; }
+        if (hunting && teamHeard) Remember(position, false, null);
+        // 발견은 눈으로만. 소리는 주의를 끈다: 사냥에 안 낀 몬스터 중 가장 가까운 1마리가 소리 난 곳을 확인하러 간다(걸음, 플레이어보다 느림)
         MonsterAI nearest = null;
         float best = float.PositiveInfinity;
         foreach (var m in listeners)
         {
-            if (!m.CanTakeOrders) continue;
+            if (!m.CanTakeOrders || roles.ContainsKey(m) || m.IsGivingUp) continue;
+            if (benchUntil.TryGetValue(m, out float until) && Time.time < until) continue;
+            var st = m.CurrentState;
+            if (st != MonsterAI.State.Patrol && st != MonsterAI.State.Investigate && st != MonsterAI.State.Idle) continue;
             float length = PathLength(m, position);
             if (length < best) { best = length; nearest = m; }
         }
         if (nearest == null) return;
-        SetRole(nearest, Role.Lead);
-        lead = nearest;
-        nearest.CommandChase(position);
-        Decide(nearest, "lead_heard", (kind == NoiseKind.Shot ? "총소리" : "과녁 소리") + " 들음 (" + listeners.Count + "마리 중 가장 가까움) → 확인하러 추격");
+        // 이미 확인하러 가는 몬스터가 있으면 그 몬스터의 목적지만 옮긴다 — 쏠 때마다 새 몬스터를 부르지 않는다
+        if (noiseChecker != null && noiseChecker != nearest && noiseChecker.CurrentState == MonsterAI.State.Investigate &&
+            !roles.ContainsKey(noiseChecker) && listeners.Contains(noiseChecker) &&
+            PathLength(noiseChecker, position) < best + 15f)
+            nearest = noiseChecker;
+        bool fresh = nearest != noiseChecker || nearest.CurrentState != MonsterAI.State.Investigate;
+        noiseChecker = nearest;
+        nearest.CommandSearch(position);
+        if (fresh) Decide(nearest, "noise_check", (kind == NoiseKind.Shot ? "총소리" : "과녁 소리") + " 들음 (" + listeners.Count + "마리 중 가장 가까움) → 소리 난 곳 확인 (발견은 눈으로)");
     }
 
     /// <summary>과녁 경보: 과녁을 쏜 순간의 플레이어 위치. 사냥 중일 때만 위치를 새로 고친다(사냥을 시작하지는 않는다).</summary>
@@ -411,7 +423,8 @@ public class MonsterDirector : MonoBehaviour
         hasSighting = false;
         knowledgeTime = sightTime = headingTime = headingSampleTime = float.NegativeInfinity;
         heading = Vector3.zero;
-        benchUntil.Clear(); decisionThrottle.Clear(); flankInvalidSince.Clear();
+        benchUntil.Clear(); decisionThrottle.Clear(); flankInvalidSince.Clear(); flankSince.Clear();
+        noiseChecker = null;
         zones.Clear();
         summary = "순찰 중";
     }
@@ -430,7 +443,7 @@ public class MonsterDirector : MonoBehaviour
 
     private void EndHunt(bool announce)
     {
-        if (announce && hunting) Decide(null, "hunt_end", Memory.ToString("F0") + "초 동안 못 보고 못 들음 → 사냥 끝, 팀 복귀");
+        if (announce && hunting) Decide(null, "hunt_end", Memory.ToString("F0") + "초 동안 아무도 못 봄 → 사냥 끝, 팀 복귀 (총소리는 확인하러 가는 몬스터만 부른다)");
         foreach (var m in new List<MonsterAI>(roles.Keys))
         {
             if (m == null) continue;
@@ -449,6 +462,7 @@ public class MonsterDirector : MonoBehaviour
     {
         knownPosition = point;
         knowledgeTime = Time.time;
+        if (!sight) return;   // 소리는 위치 힌트일 뿐 — 사냥 시작·끈질김은 눈으로 본 것만
         if (!hunting) StartHunt(point);
         foreach (var pair in roles)
             if (pair.Key != null && pair.Key != source && pair.Key.CurrentState == MonsterAI.State.Chase)
@@ -479,7 +493,7 @@ public class MonsterDirector : MonoBehaviour
         if (zones.Count == 0) BuildZones();
         if (Time.time >= nextSpread) { nextSpread = Time.time + 4f; SpreadPatrols(); }
         if (!hunting) return;
-        if (Time.time - knowledgeTime > Memory) { EndHunt(true); return; }
+        if (Time.time - sightTime > Memory) { EndHunt(true); return; }
         if (Time.time >= nextPlan) Plan();
     }
 
@@ -490,6 +504,7 @@ public class MonsterDirector : MonoBehaviour
         EnsureLead();
         BreakQueues();
         EnforceCap();
+        RotateFlanks();
         FillFlanks();
         UpdateFlankGoals();
         ApplySpeeds();
@@ -539,6 +554,8 @@ public class MonsterDirector : MonoBehaviour
         }
         else
         {
+            // 팀 밖 몬스터를 새 추격자로 부르는 건 방금(2초 안) 누가 봤을 때만 — 소리만으로는 부르지 않는다
+            if (Time.time - sightTime > 2f) return;
             best = NearestFree(knownPosition, out float length);
             if (best == null) return;
             why = "가장 가까운 몬스터 (길 " + length.ToString("F0") + "m)";
@@ -630,6 +647,24 @@ public class MonsterDirector : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 교대 순환: 우회를 flankRotateSeconds 넘게 했는데 협공에 못 들어갔으면 빈 구역으로 돌려보낸다.
+    /// 빈자리는 FillFlanks가 구역을 비우지 않는 몬스터로 다시 채운다 — 몬스터가 오가서 5마리가 더 많아 보이고, 구역도 덜 빈다.
+    /// 플레이어를 보고 있는 몬스터는 돌려보내지 않는다.
+    /// </summary>
+    private void RotateFlanks()
+    {
+        float limit = Settings != null ? Settings.flankRotateSeconds : 15f;
+        if (limit <= 0f) return;
+        foreach (var m in new List<MonsterAI>(roles.Keys))
+        {
+            if (RoleOf(m) != Role.Flank || m.IsSeeingPlayer || m.IsTraversingLink) continue;
+            if (!flankSince.TryGetValue(m, out float since) || Time.time - since < limit) continue;
+            Decide(m, "flank_rotate", "우회 " + limit.ToString("F0") + "초 동안 협공 못 함 → 교대, 빈 구역으로");
+            SendHome(m, true);
+        }
+    }
+
     /// <summary>인원 초과: 추격자는 남기고, 플레이어에게서 가장 먼 몬스터를 빈 구역으로 보낸다.</summary>
     private void EnforceCap()
     {
@@ -650,7 +685,7 @@ public class MonsterDirector : MonoBehaviour
     {
         if (roles.Count >= TeamSize) return;
         // 3초 넘게 아무도 못 보고 못 들었으면 새로 부르지 않는다 — 오래된 위치로 몰려가 봐야 헛걸음이다
-        if (Time.time - knowledgeTime > 3f) return;
+        if (Time.time - sightTime > 3f) return;
         var candidates = BuildCandidates(Settings, PredictedPosition());
         if (candidates.Count == 0) return;
         while (roles.Count < TeamSize)
@@ -871,6 +906,14 @@ public class MonsterDirector : MonoBehaviour
         if (!found)
         {
             if (hasCurrent) return;
+            if (m.CurrentState == MonsterAI.State.Chase && m.IsSeeingPlayer)
+            {
+                // 쫓던 몬스터(줄줄이·놓침으로 우회를 받은)가 갈 우회 길이 없다 — 집으로 보내면 '보면서 돌아서기'가 된다.
+                // 협공 추격을 그대로 이어간다(줄줄이 검사는 queueSeconds 뒤 다시 본다)
+                SetRole(m, Role.Assist);
+                Decide(m, "flank_none_keep", "옆·앞으로 가는 우회 길 없음 → 보고 있으니 협공 추격 유지", 2f);
+                return;
+            }
             Decide(m, "flank_none", "플레이어 옆·앞으로 가는 길 없음(뒤따라가게 됨) → 팀에서 빠짐", 2f);
             SendHome(m, false);
             return;
@@ -955,7 +998,9 @@ public class MonsterDirector : MonoBehaviour
         if (m == null) return;
         RemoveRole(m);
         if (m == lead) lead = null;
-        if (bench) benchUntil[m] = Time.time + BenchSeconds;
+        // 팀에서 막 빠진 몬스터가 바로 다시 끼면 인원 초과 → 다른 몬스터가 빠지는 연쇄가 생긴다(09-25 테스트 04:15).
+        // 인원 초과로 빠지면 benchSeconds, 그 밖에는 2초 동안 합류하지 않는다(8m 안은 예외)
+        benchUntil[m] = Time.time + (bench ? BenchSeconds : 2f);
         m.SetHuntSpeed(-1f);
         if (m.role == MonsterAI.MonsterRole.Global_Stalker || m.useGlobalNavMesh || zones.Count == 0)
         {
@@ -1080,6 +1125,8 @@ public class MonsterDirector : MonoBehaviour
     {
         if (m == null) return;
         if (role == Role.Lead && RoleOf(m) != Role.Lead) leadChangedAt = Time.time;
+        if (role == Role.Flank && RoleOf(m) != Role.Flank) flankSince[m] = Time.time;
+        if (role != Role.Flank) flankSince.Remove(m);
         roles[m] = role;
         if (!team.Contains(m)) team.Add(m);
         benchUntil.Remove(m);
@@ -1095,6 +1142,7 @@ public class MonsterDirector : MonoBehaviour
         nextFlankPlan.Remove(m);
         preferredSide.Remove(m);
         flankInvalidSince.Remove(m);
+        flankSince.Remove(m);
     }
 
     private MonsterAI FarthestNonLead(bool skipSeeing = false)

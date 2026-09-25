@@ -193,6 +193,9 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("우회 한 번의 최대 시간(초). 넘기면 도착한 것으로 친다")]
 	public float flankTimeout = 10f;
 
+	[Tooltip("교대 순환: 우회를 이 시간(초) 넘게 했는데 협공에 못 들어갔으면 빈 구역으로 돌려보내고 다른 몬스터로 바꾼다. 0이면 끔")]
+	public float flankRotateSeconds = 15f;
+
 	[Header("6-2. 감독 — 줄줄이 방지")]
 	[Tooltip("추격자 뒤 이 거리(m) 안에서 같은 쪽으로 따라오면 '줄줄이'")]
 	public float queueDistance = 10f;
@@ -568,7 +571,8 @@ public class MonsterAI : MonoBehaviour
 			agent.acceleration = chaseAcceleration;
 			break;
 		case State.Investigate:
-			agent.speed = searchReason == SearchReason.Noise ? Mathf.Max(investigateSpeed, TrackingCap) : investigateSpeed;
+			// 소리 확인은 빠른 걸음 — 플레이어(11)보다 느려야 계속 쏘며 뛰는 플레이어가 소리만으로 잡히지 않는다
+			agent.speed = searchReason == SearchReason.Noise ? Mathf.Clamp(investigateSpeed + 1f, investigateSpeed, TrackingCap - 1f) : investigateSpeed;
 			agent.acceleration = investigateAcceleration;
 			break;
 		}
