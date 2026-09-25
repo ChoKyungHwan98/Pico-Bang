@@ -735,7 +735,9 @@ public class MonsterDirector : MonoBehaviour
     {
         while (roles.Count > TeamSize)
         {
-            var farthest = FarthestNonLead(true) ?? FarthestNonLead();
+            // 보고 있는 몬스터는 돌려보내지 않는다(09-26 01:37 D가 보면서 복귀 → 2초 뒤 재합류 → A가 밀려나는 반복).
+            // 모두 보고 있으면 잠시 넘쳐도 둔다
+            var farthest = FarthestNonLead(true);
             if (farthest == null) break;
             // 모두 BrawlDistance(12m) 안에서 붙어 싸우는 중이면 잠시 넘쳐도 둔다 — 코앞 몬스터가 돌아서는 모습이 더 나쁘다.
             // 한 마리라도 떨어지면 그 몬스터부터 돌려보낸다
@@ -891,6 +893,36 @@ public class MonsterDirector : MonoBehaviour
         return list;
     }
 
+    /// <summary>
+    /// 옆 우회 후보(갈림길 후보가 없을 때만): 마지막으로 안 위치 둘레 8~30m, 거기서 길로 이어진 곳, 방향 30° 칸마다 하나.
+    /// 플레이어 길·도착 시각은 없다(route = null, playerEta = -1) — 추격자와 벌어진 옆에서 다가가는 것만 본다.
+    /// </summary>
+    private List<Candidate> BuildRadialCandidates(MonsterAI sample)
+    {
+        var list = new List<Candidate>();
+        if (anchors.Count == 0) BuildAnchors();
+        if (!NavMesh.SamplePosition(knownPosition, out var origin, 4f, NavMesh.AllAreas)) return list;
+        var best = new Vector3?[12];
+        var bestError = new float[12];
+        foreach (var a in anchors)
+        {
+            Vector3 flat = Vector3.ProjectOnPlane(a - origin.position, Vector3.up);
+            float d = flat.magnitude;
+            if (d < 8f || d > 30f || Mathf.Abs(a.y - origin.position.y) > 4f) continue;
+            int bin = Mathf.Clamp(Mathf.FloorToInt((Mathf.Atan2(flat.x, flat.z) * Mathf.Rad2Deg + 180f) / 30f), 0, 11);
+            float error = Mathf.Abs(d - FlankRadius);
+            if (best[bin] == null || error < bestError[bin]) { best[bin] = a; bestError[bin] = error; }
+        }
+        foreach (var b in best)
+        {
+            if (b == null) continue;
+            var fromPlayer = ComputePathFrom(sample, origin.position, b.Value);
+            if (fromPlayer == null || Length(fromPlayer) > Vector3.Distance(origin.position, b.Value) * 1.8f + 6f) continue;
+            list.Add(new Candidate { point = b.Value, route = null, playerEta = -1f });
+        }
+        return list;
+    }
+
     private static Vector3 RouteStartDirection(Vector3[] route)
     {
         for (int i = 1; i < route.Length; i++)
@@ -975,9 +1007,14 @@ public class MonsterDirector : MonoBehaviour
             if (OverlapsRoute(path, c.route, relax >= 2 ? 2.5f : 3.5f)) continue;
             float eta = length / FarSpeed;
             // 플레이어와 같은 때 도착하는 곳: 너무 늦으면(플레이어가 이미 지나감) 빼고, 이르거나 늦은 만큼 벌점
-            float late = eta - c.playerEta;
-            if (late > (relax >= 2 ? 4f : 2.5f)) continue;
-            float score = Mathf.Abs(late) * 1.5f + eta * .25f;
+            float score;
+            if (c.playerEta >= 0f)
+            {
+                float late = eta - c.playerEta;
+                if (late > (relax >= 2 ? 4f : 2.5f)) continue;
+                score = Mathf.Abs(late) * 1.5f + eta * .25f;
+            }
+            else score = eta;
             if (side != 0 && SideOf(c.point) != side) score += 3f;
             if (hasCurrent && Vector3.Distance(c.point, current) > 6f) score += 1.5f;
             if (score < choice.score) { choice.score = score; choice.path = (Vector3[])path.Clone(); choice.eta = eta; }
@@ -1009,6 +1046,13 @@ public class MonsterDirector : MonoBehaviour
         FlankChoice choice = default;
         bool found = false;
         for (int relax = 0; relax < 3 && !found; relax++) found = TryChooseFlank(m, candidates, relax, out choice);
+        if (!found)
+        {
+            // 갈림길(플레이어 길과 겹치지 않는 가지)이 없다 — 뒤에서 줄지은 몬스터에게 흔하다(09-26 판 17번).
+            // 갈림길 이전 방식(플레이어 둘레, 추격자와 70°+ 벌어진 옆 지점)으로 한 번 더 찾는다
+            var radial = BuildRadialCandidates(m);
+            for (int relax = 1; relax < 3 && !found; relax++) found = TryChooseFlank(m, radial, relax, out choice);
+        }
         if (!found)
         {
             if (hasCurrent) return;
