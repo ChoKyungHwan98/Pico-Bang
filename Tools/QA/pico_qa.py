@@ -18,6 +18,7 @@ Pico-Bang! 플레이 기록 QA 도구 (표준 라이브러리만 사용).
 import io
 import json
 import math
+import re
 import os
 import sys
 from collections import Counter, defaultdict
@@ -203,9 +204,9 @@ def suspicious(tr):
         prev = None
         still_since = None
         for f, m in seq:
-            # ① 보면서 집으로(복귀 시작 순간 플레이어를 보고 있음)
-            if prev and prev[1]['state'] != 'Return' and m['state'] == 'Return' and m.get('seesPlayer'):
-                found.append((f['t'], f['clock'], short(name), '플레이어를 보면서 복귀 시작'))
+            # ① 보면서 돌아섬: 플레이어를 보고 있는데 복귀·순찰로 바뀜(사냥에서 빠짐)
+            if prev and prev[1]['state'] != m['state'] and m['state'] in ('Return', 'Patrol') and m.get('seesPlayer'):
+                found.append((f['t'], f['clock'], short(name), '플레이어를 보면서 %s → %s' % (prev[1]['state'], m['state'])))
             # ② 사냥 역할인데 1.5초 넘게 멈춤(감전·접촉 제외)
             moving = speed(m.get('velocity', {'x': 0, 'z': 0})) > .5
             busy = m.get('role') and not m.get('stunned') and planar(m['position'], f['player']['position']) > 2.5
@@ -301,7 +302,10 @@ def cmd_summary(tr):
     for t, clock, who, text in found:
         print('  %s  %-6s %s' % (clock, who, text))
     encircle_report(tr)
-    zone_report(tr)
+    if 'exit-net' in tr.header.get('aiPolicy', ''):
+        ring_report(tr)
+    else:
+        zone_report(tr)
     marks = [e for e in tr.events if e['type'] == 'qa_mark']
     if marks:
         print('\nF8 표시:', ', '.join(e['clock'] for e in marks))
@@ -333,11 +337,54 @@ def encircle_report(tr):
             if any(vs[i][0] * vs[j][0] + vs[i][1] * vs[j][1] < 0 for i in range(len(vs)) for j in range(i + 1, len(vs))):
                 both += 1
     codes = Counter(decision_code(e) for e in tr.events if e['type'] == 'decision')
-    assigned = codes['flank_assign'] + codes['flank_recruit']
     n = max(1, len(near))
-    print('\n포위 지표(사냥 중): 20m 안 사냥 몬스터 평균 %.1f · 2마리+ 붙음 %d%% · 그중 양쪽에서 %d%% · 우회 성공 %d/%d(%d%%) · 사냥 시작 %d / 끝 %d · 우회 교대 %d' % (
-        sum(near) / n, 100 * two // n, 100 * both // max(1, two), codes['engage'], assigned, 100 * codes['engage'] // max(1, assigned),
-        codes['hunt_start'], codes['hunt_end'], codes['flank_swap'] + codes['flank_rotate']))
+    line = '\n포위 지표(사냥 중): 20m 안 사냥 몬스터 평균 %.1f · 2마리+ 붙음 %d%% · 그중 양쪽에서 %d%% · 사냥 시작 %d / 끝 %d' % (
+        sum(near) / n, 100 * two // n, 100 * both // max(1, two), codes['hunt_start'], codes['hunt_end'])
+    if codes['flank_assign'] + codes['flank_recruit']:
+        assigned = codes['flank_assign'] + codes['flank_recruit']
+        line += ' · 우회 성공 %d/%d(%d%%) · 우회 교대 %d' % (codes['engage'], assigned, 100 * codes['engage'] // max(1, assigned),
+                                                        codes['flank_swap'] + codes['flank_rotate'])
+    print(line)
+    if 'exit-net' not in tr.header.get('aiPolicy', ''):
+        return
+    # 포위망(2026-09-26~): 막힌 출구 비율(감독 요약 "출구 k/n"), 출구에서 달려듦, 재배치, 사냥 사이 간격
+    blocked = total = 0
+    for f in tr.frames:
+        if not f.get('hunting'):
+            continue
+        mt = re.search(r'출구 (\d+)/(\d+)', f.get('director', ''))
+        if mt:
+            blocked += int(mt.group(1))
+            total += int(mt.group(2))
+    starts = [e['t'] for e in tr.events if e['type'] == 'decision' and decision_code(e) == 'hunt_start']
+    ends = [e['t'] for e in tr.events if e['type'] == 'decision' and decision_code(e) == 'hunt_end']
+    gaps = []
+    for t in ends:
+        after = [x for x in starts if x > t]
+        if after:
+            gaps.append(after[0] - t)
+    dropped = sum(1 for e in tr.events if e['type'] == 'decision' and decision_code(e) == 'go_ring' and '출구 없음' in decision_text(e))
+    print('포위망: 막힌 출구 %d%% · 출구에서 달려듦 %d · 한 방향 한 추격자로 출구행 %d · 뒤에서만 와서 빠짐 %d · 재배치 %d · 소리 확인 %d · 사냥 사이 간격 %s' % (
+        100 * blocked // max(1, total), codes['engage'], codes['same_side_split'] + codes['engage_denied_same_side'], dropped,
+        codes['relocate'], codes['noise_call'], ('평균 %.0f초(%d번)' % (sum(gaps) / len(gaps), len(gaps))) if gaps else '-'))
+
+
+def ring_report(tr):
+    """둘레 순찰(2026-09-26~): 사냥에 안 낀 몬스터가 플레이어 둘레 30~60m에 있는 비율과 평균 거리."""
+    inside = count = 0
+    total = 0.0
+    for f in tr.frames:
+        p = f['player']['position']
+        for m in f['monsters']:
+            if m.get('role') or m['state'] not in ('Patrol', 'Return', 'Idle'):
+                continue
+            d = planar(m['position'], p)
+            total += d
+            count += 1
+            if 30 <= d <= 60:
+                inside += 1
+    if count:
+        print('둘레 순찰: 사냥에 안 낀 몬스터 평균 %.0fm · 30~60m 안 %d%%' % (total / count, 100 * inside // count))
 
 
 # 구역 기록(zone 이벤트)이 없는 옛 기록용: 포트폴리오 씬 구역 (2026-09-25 씬 값)

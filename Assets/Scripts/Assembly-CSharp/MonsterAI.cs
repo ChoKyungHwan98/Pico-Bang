@@ -6,20 +6,15 @@ using UnityEngine.AI;
 
 /// <summary>
 /// 몬스터의 몸(뇌 1). 눈·귀·이동·감전·점프와 상태 전환만 한다.
-/// 누가 추격하고 누가 우회할지는 감독(<see cref="MonsterDirector"/>, 뇌 2)이 정한다.
-/// 몸은 본 것·도착·놓침·감전을 감독에게 알리고, 감독이 준 명령(추격·우회·수색·복귀)을 수행한다.
+/// 누가 쫓고 누가 출구를 막을지, 사냥에 안 낀 몬스터가 어디를 순찰할지는 감독(<see cref="MonsterDirector"/>, 뇌 2)이 정한다.
+/// 몸은 본 것·도착·감전을 감독에게 알리고, 감독이 준 명령(추격·출구 막기·소리 확인·둘레 순찰)을 수행한다.
+/// 보이면 쫓는 것만은 몸이 스스로 한다 — 발견은 눈으로만.
 /// </summary>
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(Animator))]
 [RequireComponent(typeof(Rigidbody))]
 public class MonsterAI : MonoBehaviour
 {
-	public enum MonsterRole
-	{
-		Zone_Defender = 0,
-		Global_Stalker = 1
-	}
-
 	public enum State
 	{
 		Patrol = 0,
@@ -27,7 +22,7 @@ public class MonsterAI : MonoBehaviour
 		Investigate = 2,
 		Return = 3,
 		Stun = 4,
-		Flank = 5,
+		Block = 5,
 		Idle = 7
 	}
 
@@ -36,84 +31,70 @@ public class MonsterAI : MonoBehaviour
 
 	public static List<MonsterAI> activeMonsters = new List<MonsterAI>();
 
-	[Header("1. Identity & Role")]
-	public MonsterRole role;
-
 	public Transform player;
 
-	[Header("2. Movement & Zone")]
-	public bool useGlobalNavMesh;
-
-	public Transform zoneCenter;
-
-	public float zoneRadius = 35f;
-
-	[Header("3. Speed Settings")]
+	[Header("1. Speed Settings")]
+	[Tooltip("둘레 자리 근처를 걸을 때 속도")]
 	public float patrolSpeed = 3.5f;
 
-	[Tooltip("사냥 중이 아닐 때 쓰는 추격 속도. 사냥 중에는 감독이 거리에 따라 정한다(6. 감독 — 사냥 속도)")]
+	[Tooltip("감독 없이 쫓을 때 속도. 사냥 중에는 감독이 정한다")]
 	public float chaseSpeed = 9f;
 
-	[Tooltip("수색 지점으로 걸어갈 때 속도")]
+	[Tooltip("소리 확인하러 갈 때 속도(플레이어 달리기 11보다 느리게 — 소리만으로는 잡히지 않는다)")]
 	public float investigateSpeed = 6f;
 
 	public float patrolWaitTime;
 
-	[Tooltip("구역으로 돌아갈 때 속도. 매우 빠르게 — 구역을 꽤 벗어나기 때문")]
+	[Tooltip("멀리 떨어진 둘레 자리로 옮겨 갈 때 속도")]
 	public float returnSpeed = 16f;
 
-	[Header("3-1. Acceleration")]
+	[Header("1-1. Acceleration")]
 	public float patrolAcceleration = 30f;
 
 	public float chaseAcceleration = 80f;
 
 	public float investigateAcceleration = 50f;
 
-	[Header("3-2. Agent Base")]
+	[Header("1-2. Agent Base")]
 	public float angularSpeed = 600f;
 
 	public float stoppingDistance = 1.2f;
 
-	[Header("4. Senses — Sight")]
+	[Header("2. Senses — Sight")]
 	public float sightRange = 25f;
 
 	public float fovAngle = 160f;
 
 	public LayerMask obstacleMask;
 
-	[Header("4-1. Senses — Hearing")]
-	[Tooltip("전역 몬스터 기준 청각 반경")]
+	[Header("2-1. Senses — Hearing")]
 	public float hearingRange = 50f;
 
-	[Tooltip("구역 몬스터는 이 비율만큼만 듣는다")]
-	[Range(0.05f, 1f)]
-	public float zoneHearingScale = 0.45f;
-
-	[Tooltip("수색 지점 도착 후 두리번거리는 시간(초)")]
+	[Tooltip("소리 확인 지점 도착 후 두리번거리는 시간(초)")]
 	public float investigateLookTime = 3f;
 
 	[Tooltip("제자리 수색 시 회전 속도(도/초)")]
 	public float investigateTurnSpeed = 120f;
 
-	[Header("4-2. 멈춤 (Idle)")]
+	[Header("2-2. 멈춤 (Idle)")]
 	[Tooltip("할 수 있는 일이 없을 때(길이 없음, 발밑에 NavMesh 없음) 제자리에서 기다리다 이 주기(초)마다 다시 할 일을 찾는다")]
 	public float idleRetryInterval = 3f;
 
 	[Tooltip("멈춤 중 천천히 둘러보는 회전 속도(도/초). 멈춰 있어도 눈은 뜨고 있다")]
 	public float idleLookSpeed = 45f;
 
-	[Header("4-3. Debug")]
+	[Header("2-3. Debug")]
 	public bool showDebugLog = true;
 
 	public bool drawDebugLine = true;
 
-	[Header("5. Combat")]
+	[Header("3. Combat")]
 	[Tooltip("접촉 시 깎는 하트 수")]
 	public int contactDamageHearts = 1;
 
 	public float damageCooldown = 1f;
 
-	[Header("5-1. Stun (레이저 피격)")]
+	[Header("3-1. Stun (레이저 피격)")]
 	[Tooltip("완전히 굳어 있는 시간")]
 	public float stunFreezeTime = 1.5f;
 
@@ -136,89 +117,18 @@ public class MonsterAI : MonoBehaviour
 	[Tooltip("아크가 튀는 폭. 몸집에 맞춰 조절")]
 	public float stunArcJaggedness = 0.16f;
 
-	[Header("6. 감독(Director) — 전역 몬스터의 값만 사용됨")]
-	[Tooltip("사냥 인원(추격 1 + 우회). 1~3")]
-	public int huntTeamSize = 3;
-
-	[Tooltip("마지막으로 보거나 들은 뒤 이 시간(초)이 지나면 사냥 끝")]
-	public float huntMemory = 8f;
-
-	[Tooltip("끈질김: 시야를 처음 놓쳤을 때 동료가 아는 위치로 계속 쫓는 시간(초)")]
-	public float pursuitPersistence = 3f;
-
-	[Tooltip("끈질김이 끝나도 마지막으로 본 자리(모퉁이)까지는 가 본다. 그 확인에 쓰는 최대 시간(초)")]
-	public float cornerCheckTime = 4f;
-
-	[Tooltip("끈질김: 놓칠 때마다 다음 끈질김에 곱하는 비율. 사냥이 끝나면 처음 값으로 돌아온다")]
-	[Range(0.1f, 1f)]
-	public float persistenceDecay = 0.7f;
-
-	[Tooltip("끈질김: 줄어들어도 이 아래로는 내려가지 않는다(초)")]
-	public float persistenceMin = 2f;
-
-	[Tooltip("끈질김이 다 떨어졌을 때 그 자리에서 두리번거리는 시간(초)")]
-	public float giveUpLookTime = 2f;
-
-	[Tooltip("사냥 속도: 플레이어와 가까울 때(플레이어 달리기 11보다 느리게 — 똑바로 달리면 떨칠 수 있다)")]
-	public float huntNearSpeed = 10f;
-
-	[Tooltip("사냥 속도: 플레이어와 멀 때(먼 몬스터는 금방 따라붙는다)")]
-	public float huntFarSpeed = 14f;
-
-	[Tooltip("사냥 속도: 이 거리(m) 안이면 가까운 속도")]
-	public float huntNearDistance = 15f;
-
-	[Tooltip("사냥 속도: 이 거리(m) 밖이면 먼 속도. 사이는 부드럽게 바뀐다")]
-	public float huntFarDistance = 40f;
-
-	[Header("6-1. 감독 — 우회(포위)")]
-	[Tooltip("우회 목표: 플레이어가 이 시간(초) 뒤에 있을 곳을 예상해 그 둘레에 목표를 잡는다")]
-	public float flankLeadTime = 2f;
-
-	[Tooltip("우회 목표: 예상 위치에서 이 거리(m) 떨어진 옆·앞 지점")]
-	public float flankRadius = 16f;
-
-	[Tooltip("우회 몬스터로 부를 수 있는 최대 거리(m). 이보다 먼 몬스터는 자기 구역을 지킨다 — 5마리가 맵 곳곳에 있어야 여러 마리처럼 보인다")]
-	public float flankRecruitRange = 90f;
-
-	[Tooltip("우회 몬스터가 이 거리(m) 안에서 플레이어를 보면 협공 추격으로 바뀐다")]
-	public float flankEngageDistance = 18f;
-
-	[Tooltip("우회 지점에 도착했는데 안 보이면 이 시간(초) 둘러본 뒤 감독에게 다음 지점을 받는다")]
-	public float flankSearchTime = 1.5f;
-
-	[Tooltip("우회에서 연달아 못 찾으면 이 횟수 뒤 구역으로 돌아간다")]
-	public int flankMaxMisses = 3;
-
-	[Tooltip("우회 한 번의 최대 시간(초). 넘기면 도착한 것으로 친다")]
-	public float flankTimeout = 10f;
-
-	[Tooltip("교대 순환: 우회를 이 시간(초) 넘게 했는데 협공에 못 들어갔으면 빈 구역으로 돌려보내고 다른 몬스터로 바꾼다. 0이면 끔")]
-	public float flankRotateSeconds = 15f;
-
-	[Header("6-2. 감독 — 줄줄이 방지")]
-	[Tooltip("추격자 뒤 이 거리(m) 안에서 같은 쪽으로 따라오면 '줄줄이'")]
-	public float queueDistance = 10f;
-
-	[Tooltip("줄줄이가 이 시간(초) 이어지면 뒤쪽 몬스터를 반대쪽 우회로 돌린다")]
-	public float queueSeconds = 2.5f;
-
-	[Tooltip("인원 초과로 구역에 돌아가는 몬스터는 이 시간(초) 동안 멀리 보이는 플레이어를 무시한다(8m 안은 예외)")]
-	public float benchSeconds = 5f;
-
-	[Tooltip("협공 추격자가 플레이어에게 다가가는 최소 거리(m). 여기서 멈추고 추격자와 겹치지 않는 옆쪽으로 벌어져 에워싼다 — 한 덩어리로 붙지 않게")]
-	public float assistSpacing = 3.2f;
-
-	[Header("7. Jump (단차 이동)")]
+	[Header("4. Jump (단차 이동)")]
 	public float jumpDuration = 0.5f;
 
 	public float jumpHeight = 1.5f;
 
 	private const float HintInterval = 0.5f;
-	private const float SightFlickerGrace = 0.5f;
 	private const float TouchSightRange = 2f;
 	private const int MaxPathFailures = 3;
 	private const float IdleSnapDistance = 2f;
+	private const float WanderRadius = 10f;
+	private const float FarFromPatrol = 20f;
+	private const float LostWithoutDirector = 3f;
 
 	private NavMeshAgent agent;
 	private Animator animator;
@@ -227,8 +137,6 @@ public class MonsterAI : MonoBehaviour
 	private Collider playerCollider;
 	private State currentState;
 	private State stateBeforeStun;
-	private static NavMeshTriangulation navMeshData;
-	private static bool isNavMeshDataLoaded;
 	private float stateTimer;
 	private float damageTimer;
 	private bool isJumping;
@@ -236,51 +144,34 @@ public class MonsterAI : MonoBehaviour
 	private bool playerPassThrough;
 	private Vector3 startPosition;
 	private Quaternion startRotation;
-	private Transform generatedHome;
-	private Transform originalZoneCenter;
-	private float originalZoneRadius;
 	private int patrolFailures;
 	private int returnFailures;
 
-	// 추격: 마지막으로 본 자리, 끈질김
+	// 둘레 순찰: 감독이 준 자리 근처를 걷는다
+	private Vector3 patrolCenter;
+	private bool hasPatrolCenter;
+
+	// 추격 · 출구 막기
 	private Vector3 lastKnownPos;
 	private float huntSpeed = -1f;
-	private float pursuitBudget = 3f;
-	private float pursuitTimer;
-	private bool lostSight;
-	private float lostSightAt;
-	private float budgetBeforeLoss;
 	private float nextHintTime;
-	private Vector3 cornerPos;
-	private float cornerTimer;
-	private bool checkingCorner;
-	private bool givingUp;
-
-	// 우회: 감독이 준 길을 꼭짓점 순서로 따라간다
-	private Vector3[] flankCorners;
-	private int flankIndex;
-	private Vector3 flankGoal;
-	private float flankTimer;
-
-	// 수색이 끝나면 감독에게 무엇을 알릴지
-	private enum SearchReason { None, Noise, FlankMiss, GiveUp }
-	private SearchReason searchReason;
+	private float lostSightAt = float.NegativeInfinity;
+	private Vector3 blockGoal;
+	private bool closingIn;
 
 	public State CurrentState => currentState;
 	public bool IsInStun => currentState == State.Stun;
 	public bool IsTraversingLink => isJumping;
-	public bool IsGivingUp => givingUp;
-	public bool IsFlanking => currentState == State.Flank;
+	public bool IsBlocking => currentState == State.Block;
+	public bool IsClosingIn => currentState == State.Block && closingIn;
 	public bool IsSeeingPlayer { get; private set; }
 	public float SeenPlayerAt { get; private set; } = float.NegativeInfinity;
 	public bool CanTakeOrders => !isStunned && !isJumping && agent != null && agent.enabled && agent.isOnNavMesh;
-	public Vector3 FlankGoal => flankGoal;
-	public Vector3[] DebugFlankRoute => currentState == State.Flank ? flankCorners : null;
+	public Vector3 BlockGoal => blockGoal;
+	public Vector3 PatrolCenter => hasPatrolCenter ? patrolCenter : transform.position;
 	public Vector3 DebugDestination =>
 		(agent != null && agent.isOnNavMesh && agent.hasPath) ? agent.destination : transform.position;
-	public float EffectiveHearingRange => role == MonsterRole.Global_Stalker ? hearingRange : hearingRange * zoneHearingScale;
-	public Transform OriginalZone => originalZoneCenter;
-	public float OriginalZoneRadius => originalZoneRadius;
+	public float EffectiveHearingRange => hearingRange;
 
 	public Vector3 PlanarVelocity
 	{
@@ -312,16 +203,11 @@ public class MonsterAI : MonoBehaviour
 			switch (currentState)
 			{
 			case State.Patrol: return "순찰";
-			case State.Chase:
-				if (checkingCorner) return "모퉁이 확인";
-				return lostSight ? $"추적 {Mathf.Max(0f, pursuitTimer):F1}초" : "추격";
-			case State.Investigate:
-				if (givingUp) return "놓침";
-				if (searchReason == SearchReason.FlankMiss) return "우회 끝 둘러봄";
-				return HasArrived() ? "수색" : "수색 이동";
-			case State.Return: return "복귀";
+			case State.Chase: return IsSeeingPlayer ? "추격" : "흔적 추적";
+			case State.Investigate: return HasArrived() ? "둘러봄" : "소리 확인";
+			case State.Return: return "자리 이동";
 			case State.Stun: return "감전";
-			case State.Flank: return "우회";
+			case State.Block: return closingIn ? "출구에서 조여 듦" : "출구로";
 			case State.Idle: return "멈춤";
 			}
 			return currentState.ToString();
@@ -348,30 +234,9 @@ public class MonsterAI : MonoBehaviour
 		if (playerPassThrough) SetPlayerPassThrough(false);
 	}
 
-	private void OnDestroy()
-	{
-		if (generatedHome != null) Destroy(generatedHome.gameObject);
-	}
-
 	private void Start()
 	{
 		if (player == null) player = GameObject.FindGameObjectWithTag("Player")?.transform;
-		if (useGlobalNavMesh && !isNavMeshDataLoaded)
-		{
-			navMeshData = NavMesh.CalculateTriangulation();
-			isNavMeshDataLoaded = true;
-		}
-		if (zoneCenter == null || zoneCenter.IsChildOf(transform))
-		{
-			// 일부 씬은 전역 몬스터의 집을 자기 자신(움직이는 transform)으로 가리킨다 — 고정된 집을 만든다
-			Vector3 homePosition = zoneCenter != null ? zoneCenter.position : transform.position;
-			var home = new GameObject(name + "_Home");
-			home.transform.position = homePosition;
-			zoneCenter = home.transform;
-			generatedHome = zoneCenter;
-		}
-		originalZoneCenter = zoneCenter;
-		originalZoneRadius = zoneRadius;
 		agent.acceleration = patrolAcceleration;
 		agent.angularSpeed = angularSpeed;
 		agent.stoppingDistance = stoppingDistance;
@@ -380,12 +245,10 @@ public class MonsterAI : MonoBehaviour
 		agent.autoBraking = false;
 		PickNewDestination();
 		_ = MonsterDirector.Instance;
-		ResetPursuit();
 	}
 
 	public void ResetMonster()
 	{
-		if (originalZoneCenter != null) { zoneCenter = originalZoneCenter; zoneRadius = originalZoneRadius; }
 		StopAllCoroutines();
 		if (playerPassThrough) SetPlayerPassThrough(false);
 		agent.updateRotation = true;
@@ -398,11 +261,9 @@ public class MonsterAI : MonoBehaviour
 		isStunned = isJumping = false;
 		damageTimer = 0f;
 		huntSpeed = -1f;
-		checkingCorner = givingUp = lostSight = false;
-		flankCorners = null;
-		searchReason = SearchReason.None;
+		closingIn = false;
+		hasPatrolCenter = false;
 		IsSeeingPlayer = false;
-		ResetPursuit();
 		if (animator != null)
 		{
 			animator.Rebind();
@@ -417,64 +278,45 @@ public class MonsterAI : MonoBehaviour
 		}
 	}
 
-	/// <summary>끈질김을 처음 값으로 되돌린다(사냥이 끝날 때).</summary>
-	public void ResetPursuit()
-	{
-		pursuitBudget = Director != null ? Director.PursuitPersistence : pursuitPersistence;
-	}
-
 	/// <summary>감독이 정한 사냥 속도. 음수면 해제(chaseSpeed 사용).</summary>
 	public void SetHuntSpeed(float speed) { huntSpeed = speed; }
 
 	private float HuntMoveSpeed => huntSpeed > 0f ? huntSpeed : chaseSpeed;
-	private float TrackingCap => Director != null ? Director.TrackingSpeedCap : huntNearSpeed;
 
 	// ────────────────────────────────────────────────
 	//  감독의 명령
 	// ────────────────────────────────────────────────
 
-	/// <summary>추격: 보이면 플레이어에게 곧장, 안 보이면 known으로 가며 끈질김만큼 쫓는다.</summary>
+	/// <summary>추격: 보이면 플레이어에게 곧장, 안 보이면 감독이 아는 위치(흔적)로.</summary>
 	public void CommandChase(Vector3 known)
 	{
 		if (!CanTakeOrders) return;
-		if (currentState == State.Chase) return;
-		lastKnownPos = cornerPos = known;
-		givingUp = checkingCorner = false;
-		ChangeState(State.Chase);
-		if (!IsSeeingPlayer)
+		lastKnownPos = known;
+		if (currentState != State.Chase)
 		{
-			// 보지 못한 채 추격을 받았다 — 곧바로 '놓친' 상태에서 시작해 끈질김이 흐른다
-			BeginLostSight();
+			ChangeState(State.Chase);
+			if (!IsSeeingPlayer) lostSightAt = Time.time;
 		}
-		agent.SetDestination(known);
+		if (!IsSeeingPlayer) agent.SetDestination(known);
 	}
 
-	/// <summary>우회: 감독이 준 길(꼭짓점)을 따라 목표로 간다. 같은 목표를 다시 받으면 이어서 간다.</summary>
-	public void CommandFlank(Vector3[] corners)
+	/// <summary>출구 막기: 감독이 정한 출구로 달려간다. 도착하면 서지 않고 플레이어 쪽으로 조여 든다.</summary>
+	public void CommandBlock(Vector3 goal)
 	{
-		if (!CanTakeOrders || corners == null || corners.Length < 2) return;
-		Vector3 goal = corners[corners.Length - 1];
-		bool sameGoal = currentState == State.Flank && Vector3.Distance(goal, flankGoal) < 1f;
-		flankCorners = corners;
-		flankGoal = goal;
-		if (!sameGoal)
-		{
-			flankIndex = 1;
-			flankTimer = Director != null ? Director.FlankTimeout : 10f;
-		}
-		givingUp = checkingCorner = false;
-		searchReason = SearchReason.None;
-		if (currentState != State.Flank) ChangeState(State.Flank);
-		else UpdateFlankDestination();
+		if (!CanTakeOrders) return;
+		bool sameGoal = currentState == State.Block && Vector3.Distance(goal, blockGoal) < 3f;
+		blockGoal = goal;
+		if (currentState != State.Block) { ChangeState(State.Block); return; }
+		if (sameGoal) return;
+		closingIn = false;
+		agent.SetDestination(goal);
 	}
 
-	/// <summary>수색: 지점으로 가서 둘러본다(소리를 들었을 때).</summary>
+	/// <summary>소리 확인: 지점으로 가서 둘러본다.</summary>
 	public void CommandSearch(Vector3 point)
 	{
-		if (!CanTakeOrders || currentState == State.Chase) return;
+		if (!CanTakeOrders || currentState == State.Chase || currentState == State.Block) return;
 		lastKnownPos = point;
-		givingUp = false;
-		searchReason = SearchReason.Noise;
 		if (currentState == State.Investigate)
 		{
 			stateTimer = investigateLookTime;
@@ -483,26 +325,34 @@ public class MonsterAI : MonoBehaviour
 		else ChangeState(State.Investigate);
 	}
 
-	/// <summary>복귀: 감독이 정한 구역으로 돌아간다(가장 가까운 빈 구역).</summary>
-	public void CommandReturn(Transform home, float radius)
+	/// <summary>둘레 순찰: 감독이 준 자리 근처를 걷는다. 멀면 먼저 빠르게 옮겨 간다.</summary>
+	public void CommandPatrolAt(Vector3 center)
 	{
 		if (isStunned) return;
-		if (home != null) { zoneCenter = home; zoneRadius = radius; }
-		givingUp = checkingCorner = false;
-		if (currentState == State.Return)
+		patrolCenter = center;
+		hasPatrolCenter = true;
+		huntSpeed = -1f;
+		bool far = Vector3.Distance(transform.position, center) > FarFromPatrol;
+		if (far)
 		{
-			if (agent.isOnNavMesh && zoneCenter != null) agent.SetDestination(zoneCenter.position);
+			if (currentState == State.Return) { if (agent.isOnNavMesh) agent.SetDestination(center); }
+			else ChangeState(State.Return);
 			return;
 		}
-		ChangeState(State.Return);
+		if (currentState == State.Patrol) return;
+		ChangeState(State.Patrol);
 	}
 
-	/// <summary>사냥과 상관없이 순찰로 돌아간다(구역 안에 있을 때).</summary>
-	public void CommandPatrol()
+	/// <summary>재배치: 아무도 보지 않을 때 감독이 둘레 자리로 옮긴다.</summary>
+	public void Relocate(Vector3 point)
 	{
-		if (isStunned) return;
-		givingUp = checkingCorner = false;
-		ChangeState(State.Patrol);
+		if (!CanTakeOrders) return;
+		agent.Warp(point);
+		patrolCenter = point;
+		hasPatrolCenter = true;
+		PlaytestRecorder.Record("monster_state", name, point, currentState + " -> Relocated");
+		if (currentState == State.Patrol) PickNewDestination();
+		else ChangeState(State.Patrol);
 	}
 
 	// ────────────────────────────────────────────────
@@ -531,12 +381,12 @@ public class MonsterAI : MonoBehaviour
 		if (currentState == State.Stun || isJumping) return;
 
 		bool canSee = CheckSight();
+		if (IsSeeingPlayer && !canSee) lostSightAt = Time.time;
 		IsSeeingPlayer = canSee;
 		if (canSee)
 		{
 			SeenPlayerAt = Time.time;
 			Director?.ReportSighting(this, player.position);
-			// 감독이 이 보고로 역할을 바꿨을 수 있다(합류·협공)
 		}
 
 		ApplySpeed();
@@ -544,7 +394,7 @@ public class MonsterAI : MonoBehaviour
 		{
 		case State.Patrol: ProcessPatrol(canSee); break;
 		case State.Chase: ProcessChase(canSee); break;
-		case State.Flank: ProcessFlank(canSee); break;
+		case State.Block: ProcessBlock(canSee); break;
 		case State.Investigate: ProcessInvestigate(canSee); break;
 		case State.Return: ProcessReturn(canSee); break;
 		case State.Idle: ProcessIdle(canSee); break;
@@ -565,38 +415,33 @@ public class MonsterAI : MonoBehaviour
 			agent.acceleration = chaseAcceleration;
 			break;
 		case State.Chase:
-			// 보고 있으면 거리에 따른 사냥 속도, 못 본 채 쫓을 때는 플레이어보다 느리게 — 똑바로 달리면 떨칠 수 있다
-			agent.speed = lostSight ? Mathf.Min(HuntMoveSpeed, TrackingCap) : HuntMoveSpeed;
+			agent.speed = HuntMoveSpeed;
 			agent.acceleration = chaseAcceleration;
 			break;
-		case State.Flank:
-			agent.speed = HuntMoveSpeed;
+		case State.Block:
+			agent.speed = closingIn && Director != null ? Director.CloseInSpeed : HuntMoveSpeed;
 			agent.acceleration = chaseAcceleration;
 			break;
 		case State.Investigate:
 			// 소리 확인은 빠른 걸음 — 플레이어(11)보다 느려야 계속 쏘며 뛰는 플레이어가 소리만으로 잡히지 않는다
-			agent.speed = searchReason == SearchReason.Noise ? Mathf.Clamp(investigateSpeed + 1f, investigateSpeed, TrackingCap - 1f) : investigateSpeed;
+			agent.speed = investigateSpeed;
 			agent.acceleration = investigateAcceleration;
 			break;
 		}
 	}
 
-	/// <summary>눈에 띈 플레이어를 쫓을지 감독에게 묻는다. 허락하면 추격에 들어간다.</summary>
-	private bool TryJoinChase()
+	/// <summary>보이면 쫓는다. 감독에게는 ReportSighting으로 이미 알렸다(사냥에 들어감).</summary>
+	private bool StartChaseOnSight(bool canSee)
 	{
-		if (Director != null && !Director.RequestJoin(this)) return false;
-		if (currentState != State.Chase)
-		{
-			lastKnownPos = player.position;
-			givingUp = checkingCorner = false;
-			ChangeState(State.Chase);
-		}
+		if (!canSee) return false;
+		lastKnownPos = player.position;
+		ChangeState(State.Chase);
 		return true;
 	}
 
 	private void ProcessPatrol(bool canSee)
 	{
-		if (canSee && TryJoinChase()) return;
+		if (StartChaseOnSight(canSee)) return;
 		// 갈 수 있는 순찰 지점을 연달아 못 찾으면 매 프레임 길을 다시 묻지 않고 멈춤으로 기다린다
 		if (agent.hasPath && agent.pathStatus == NavMeshPathStatus.PathComplete) patrolFailures = 0;
 		if (patrolFailures >= MaxPathFailures) { EnterIdle("patrol_unreachable"); return; }
@@ -612,155 +457,61 @@ public class MonsterAI : MonoBehaviour
 	}
 
 	/// <summary>
-	/// 추격. 보이면 정확한 위치로, 놓치면 동료가 아는 위치(감독의 힌트)로 끈질김만큼 더 쫓는다.
-	/// 놓칠 때마다 다음 끈질김이 줄어든다 — 모퉁이를 여러 번 돌면 결국 떨어져 나간다.
+	/// 추격. 보이면 플레이어에게 곧장. 안 보이면 감독이 아는 위치(흔적)로 간다 —
+	/// 흔적을 쫓을지 출구로 돌릴지, 사냥을 끝낼지는 감독이 정한다.
 	/// </summary>
 	private void ProcessChase(bool canSee)
 	{
 		if (canSee)
 		{
-			// 한순간 깜빡 끊겼다 다시 본 것은 '놓침'으로 치지 않는다
-			if (lostSight && Time.time - lostSightAt < SightFlickerGrace) pursuitBudget = budgetBeforeLoss;
-			lostSight = false;
-			checkingCorner = false;
 			lastKnownPos = player.position;
-			// 협공이면 추격자와 겹치지 않는 옆자리로 — 추격자만 몸으로 부딪힌다
-			agent.SetDestination(Director != null && Director.TryGetSpacingSlot(this, out Vector3 slot) ? slot : player.position);
-			return;
-		}
-		if (!lostSight) BeginLostSight();
-
-		pursuitTimer -= Time.deltaTime;
-		if (pursuitTimer <= 0f)
-		{
-			// 끈질김이 끝나도 마지막으로 본 자리까지는 가 본다
-			cornerTimer -= Time.deltaTime;
-			if (Vector3.Distance(transform.position, cornerPos) <= 3f || cornerTimer <= 0f)
-			{
-				GiveUpChase();
-				return;
-			}
-			checkingCorner = true;
-			agent.SetDestination(cornerPos);
+			agent.SetDestination(player.position);
 			return;
 		}
 		if (Time.time >= nextHintTime)
 		{
 			nextHintTime = Time.time + HintInterval;
-			if (Director != null && Director.TryGetPursuitHint(this, out Vector3 hint))
-			{
-				lastKnownPos = hint;
-				cornerPos = hint;
-			}
+			if (Director != null && Director.TryGetPursuitHint(out Vector3 hint)) lastKnownPos = hint;
 			agent.SetDestination(lastKnownPos);
 		}
-	}
-
-	private void BeginLostSight()
-	{
-		lostSight = true;
-		lostSightAt = Time.time;
-		budgetBeforeLoss = pursuitBudget;
-		pursuitTimer = pursuitBudget;
-		cornerPos = lastKnownPos;
-		cornerTimer = cornerCheckTime;
-		checkingCorner = false;
-		float decay = Director != null ? Director.PersistenceDecay : persistenceDecay;
-		float min = Director != null ? Director.PersistenceMin : persistenceMin;
-		pursuitBudget = Mathf.Max(min, pursuitBudget * decay);
-		nextHintTime = 0f;
-	}
-
-	/// <summary>동료가 새로 본 위치를 알려주면 끈질김이 바닥나지 않게 조금 채운다.</summary>
-	public void RefreshPursuitEvidence(Vector3 position)
-	{
-		if (currentState != State.Chase || !lostSight) return;
-		lastKnownPos = cornerPos = position;
-		checkingCorner = false;
-		pursuitTimer = Mathf.Max(pursuitTimer, Director != null ? Director.PersistenceMin : persistenceMin);
-	}
-
-	private void GiveUpChase()
-	{
-		lostSight = false;
-		givingUp = true;
-		lastKnownPos = transform.position;
-		searchReason = SearchReason.GiveUp;
-		ChangeState(State.Investigate);
-		stateTimer = Director != null ? Director.GiveUpLookTime : giveUpLookTime;
-		Director?.ReportLostPlayer(this);
-		if (showDebugLog) Debug.Log($"<color=grey><b>[추격 포기]</b></color> {name} — 끈질김이 다 떨어짐 (다음 끈질김 {pursuitBudget:F1}초)");
+		// 감독이 없으면(테스트) 잠시 뒤 둘러보기로
+		if (Director == null && Time.time - lostSightAt > LostWithoutDirector) ChangeState(State.Investigate);
 	}
 
 	/// <summary>
-	/// 우회. 감독이 준 길로 목표까지 간다. 서서 기다리지 않는다.
-	/// 가까이서 플레이어를 보면 감독에게 협공을 청하고, 도착해서 안 보이면 잠깐 둘러본 뒤 다음 지점을 받는다.
+	/// 출구 막기. 출구까지 달려가고, 도착하면 멈추지 않고 감독이 아는 위치로 천천히 조여 든다.
+	/// 가는 중이든 조여 드는 중이든 플레이어가 보이면 감독에게 묻고 달려든다(같은 쪽 뒤라면 출구를 지킨다).
 	/// </summary>
-	private void ProcessFlank(bool canSee)
+	private void ProcessBlock(bool canSee)
 	{
-		if (flankCorners == null) { FinishFlank(canSee); return; }
 		if (canSee && Director != null && Director.RequestEngage(this))
 		{
 			lastKnownPos = player.position;
 			ChangeState(State.Chase);
 			return;
 		}
-		flankTimer -= Time.deltaTime;
-		if (flankIndex < flankCorners.Length - 1 && Vector3.Distance(transform.position, flankCorners[flankIndex]) < 1.25f)
-			UpdateFlankDestination();
-		if (!agent.pathPending && agent.pathStatus == NavMeshPathStatus.PathInvalid)
+		if (!agent.pathPending && agent.pathStatus == NavMeshPathStatus.PathInvalid && !closingIn)
 		{
-			Director?.ReportFlankBlocked(this);
+			Director?.ReportBlockFailed(this);
 			return;
 		}
-		bool arrived = flankIndex >= flankCorners.Length - 1 && HasArrived();
-		if (arrived || flankTimer <= 0f) FinishFlank(canSee);
-	}
-
-	private void FinishFlank(bool canSee)
-	{
-		if (canSee && Director != null && Director.RequestEngage(this, true))
+		if (!closingIn)
 		{
-			lastKnownPos = player.position;
-			ChangeState(State.Chase);
-			return;
+			if (Vector3.Distance(transform.position, blockGoal) > 2.5f && !HasArrived()) return;
+			closingIn = true;
+			nextHintTime = 0f;
 		}
-		// 도착 지점을 짧게 둘러본다 — 그 사이 보이면 합류
-		lastKnownPos = transform.position;
-		searchReason = SearchReason.FlankMiss;
-		ChangeState(State.Investigate);
-		stateTimer = Director != null ? Director.FlankSearchTime : flankSearchTime;
-	}
-
-	private void UpdateFlankDestination()
-	{
-		if (flankCorners == null || flankIndex >= flankCorners.Length) return;
-		// 꼭짓점은 다음 꼭짓점이 벽 없이 보일 때만 지난 것으로 친다(벽 모서리를 깎지 않게)
-		while (flankIndex < flankCorners.Length - 1 &&
-			(Vector3.Distance(transform.position, flankCorners[flankIndex]) < .4f ||
-			(Vector3.Distance(transform.position, flankCorners[flankIndex]) < 1.25f &&
-			!NavMesh.Raycast(transform.position, flankCorners[flankIndex + 1], out _, NavigationFilter))))
-		{
-			flankIndex++;
-		}
-		bool last = flankIndex >= flankCorners.Length - 1;
-		agent.stoppingDistance = last ? stoppingDistance : .15f;
-		agent.autoBraking = last;
-		agent.SetDestination(flankCorners[flankIndex]);
+		if (Time.time < nextHintTime) return;
+		nextHintTime = Time.time + HintInterval;
+		if (Director != null && Director.TryGetPursuitHint(out Vector3 hint)) agent.SetDestination(hint);
 	}
 
 	private void ProcessInvestigate(bool canSee)
 	{
-		if (canSee)
-		{
-			bool joined = searchReason == SearchReason.FlankMiss
-				? Director != null && Director.RequestEngage(this, true) && JoinFromSearch()
-				: TryJoinChase();
-			if (joined) return;
-		}
+		if (StartChaseOnSight(canSee)) return;
 		if (!agent.pathPending && agent.pathStatus == NavMeshPathStatus.PathInvalid)
 		{
-			// 수색 지점까지 길이 없다 — 도착을 영영 기다리지 않는다
+			// 확인 지점까지 길이 없다 — 도착을 영영 기다리지 않는다
 			FinishSearch();
 			return;
 		}
@@ -770,27 +521,16 @@ public class MonsterAI : MonoBehaviour
 		if (stateTimer <= 0f) FinishSearch();
 	}
 
-	private bool JoinFromSearch()
-	{
-		lastKnownPos = player.position;
-		ChangeState(State.Chase);
-		return true;
-	}
-
 	private void FinishSearch()
 	{
-		var reason = searchReason;
-		searchReason = SearchReason.None;
-		givingUp = false;
-		if (reason == SearchReason.FlankMiss && Director != null) { Director.ReportFlankMissed(this); return; }
 		if (Director != null) { Director.ReportSearchDone(this); return; }
-		ChangeState(IsOutsideZone() ? State.Return : State.Patrol);
+		ChangeState(State.Patrol);
 	}
 
 	private void ProcessReturn(bool canSee)
 	{
-		if (canSee && TryJoinChase()) return;
-		if (zoneCenter != null && Vector3.Distance(transform.position, zoneCenter.position) < 3f)
+		if (StartChaseOnSight(canSee)) return;
+		if (Vector3.Distance(transform.position, patrolCenter) < 4f)
 		{
 			ChangeState(State.Patrol);
 			return;
@@ -799,21 +539,21 @@ public class MonsterAI : MonoBehaviour
 		if (!agent.pathPending && (agent.pathStatus != NavMeshPathStatus.PathComplete || !agent.hasPath) && stateTimer > 1f)
 		{
 			stateTimer = 0f;
-			// 집까지 길이 계속 없으면 영원히 재시도하지 않고 멈춤으로 기다린다
-			if (++returnFailures >= MaxPathFailures) { EnterIdle("home_unreachable"); return; }
-			if (zoneCenter != null) agent.SetDestination(zoneCenter.position);
+			// 자리까지 길이 계속 없으면 영원히 재시도하지 않고 멈춤으로 기다린다
+			if (++returnFailures >= MaxPathFailures) { EnterIdle("slot_unreachable"); return; }
+			agent.SetDestination(patrolCenter);
 		}
 	}
 
 	/// <summary>
 	/// 멈춤: 할 수 있는 일이 없을 때의 안전한 기본 상태. 제자리에서 천천히 둘러보며 눈은 뜨고 있고,
-	/// 일정 주기마다 할 일(집으로 가기 → 순찰)을 다시 찾는다. 감독의 명령은 언제든 받는다.
+	/// 일정 주기마다 순찰을 다시 시도한다. 감독의 명령은 언제든 받는다.
 	/// </summary>
 	private void EnterIdle(string reason)
 	{
 		PlaytestRecorder.Record("monster_idle", name, transform.position, reason);
 		if (showDebugLog) Debug.Log($"<color=grey><b>[멈춤]</b></color> {name} — {reason}");
-		givingUp = checkingCorner = false;
+		hasPatrolCenter = false;
 		ChangeState(State.Idle);
 		stateTimer = Mathf.Max(0.5f, idleRetryInterval);
 		Director?.ReportIdle(this);
@@ -821,7 +561,7 @@ public class MonsterAI : MonoBehaviour
 
 	private void ProcessIdle(bool canSee)
 	{
-		if (canSee && agent.isOnNavMesh && TryJoinChase()) return;
+		if (agent.isOnNavMesh && StartChaseOnSight(canSee)) return;
 		transform.Rotate(Vector3.up, idleLookSpeed * Time.deltaTime);
 		stateTimer -= Time.deltaTime;
 		if (stateTimer > 0f) return;
@@ -832,16 +572,6 @@ public class MonsterAI : MonoBehaviour
 			if (agent.enabled && NavMesh.SamplePosition(transform.position, out NavMeshHit hit, IdleSnapDistance, NavMesh.AllAreas))
 				agent.Warp(hit.position);
 			return;
-		}
-		if (zoneCenter != null && Vector3.Distance(transform.position, zoneCenter.position) >= 3f)
-		{
-			var path = new NavMeshPath();
-			if (NavMesh.CalculatePath(transform.position, zoneCenter.position, NavigationFilter, path) &&
-				path.status == NavMeshPathStatus.PathComplete)
-			{
-				ChangeState(State.Return);
-				return;
-			}
 		}
 		ChangeState(State.Patrol);
 	}
@@ -906,7 +636,7 @@ public class MonsterAI : MonoBehaviour
 		if (showStunSparks) StunSparkEffect.Play(transform, stunFreezeTime, arcCount: stunArcCount, jagged: stunArcJaggedness);
 
 		yield return new WaitForSeconds(stunFreezeTime);
-		if (stateBeforeStun == State.Patrol || stateBeforeStun == State.Return || stateBeforeStun == State.Investigate)
+		if (stateBeforeStun == State.Patrol || stateBeforeStun == State.Return || stateBeforeStun == State.Investigate || stateBeforeStun == State.Idle)
 		{
 			// 몰랐던 몬스터는 맞은 쪽을 돌아본다
 			Vector3 look = shooterPosition - transform.position;
@@ -919,22 +649,24 @@ public class MonsterAI : MonoBehaviour
 		isStunned = false;
 		// 충돌 복구만 따로 기다린다. AI는 곧바로 깨어난다
 		if (playerPassThrough) StartCoroutine(RestoreCollisionWhenClear());
-		currentState = State.Investigate;   // 감독이 곧바로 다음 일을 정한다(보이면 합류, 아니면 복귀)
-		searchReason = SearchReason.None;
+		// 일단 제자리에서 둘러본다 — 감독이 곧바로 다음 일을 정한다(사냥 중이면 다시 배정, 아니면 맞은 쪽 확인)
+		lastKnownPos = transform.position;
+		currentState = State.Investigate;
+		stateTimer = investigateLookTime;
+		if (agent.isOnNavMesh) agent.SetDestination(transform.position);
 		PlaytestRecorder.Record("monster_state", name, transform.position, "Stun -> Recovered");
 		bool sees = CheckSight();
 		IsSeeingPlayer = sees;
-		if (Director != null) Director.ReportRecovered(this, sees);
-		else ChangeState(State.Return);
+		if (sees)
+		{
+			SeenPlayerAt = Time.time;
+			Director?.ReportSighting(this, player.position);
+			StartChaseOnSight(true);
+		}
+		else Director?.ReportRecovered(this, shooterPosition);
 	}
 
 	// ────────────────────────────────────────────────
-
-	private bool IsOutsideZone()
-	{
-		return !useGlobalNavMesh && role == MonsterRole.Zone_Defender && zoneCenter != null
-			&& Vector3.Distance(transform.position, zoneCenter.position) > zoneRadius;
-	}
 
 	private bool HasArrived()
 	{
@@ -942,31 +674,18 @@ public class MonsterAI : MonoBehaviour
 			&& agent.remainingDistance <= agent.stoppingDistance + 0.5f;
 	}
 
+	/// <summary>순찰 목적지: 감독이 준 둘레 자리 근처(없으면 지금 자리 근처).</summary>
 	private void PickNewDestination()
 	{
-		Vector3 destination = transform.position;
-		if (useGlobalNavMesh)
+		Vector3 center = hasPatrolCenter ? patrolCenter : transform.position;
+		Vector3 destination = center;
+		for (int i = 0; i < 5; i++)
 		{
-			if (!isNavMeshDataLoaded || navMeshData.vertices == null || navMeshData.vertices.Length == 0)
+			Vector2 offset = UnityEngine.Random.insideUnitCircle * WanderRadius;
+			if (NavMesh.SamplePosition(center + new Vector3(offset.x, 0f, offset.y), out var hit, 4f, NavMesh.AllAreas))
 			{
-				navMeshData = NavMesh.CalculateTriangulation();
-				isNavMeshDataLoaded = true;
-			}
-			if (navMeshData.vertices.Length != 0)
-				destination = navMeshData.vertices[UnityEngine.Random.Range(0, navMeshData.vertices.Length)];
-		}
-		else
-		{
-			Vector3 center = zoneCenter != null ? zoneCenter.position : transform.position;
-			destination = center;
-			for (int i = 0; i < 5; i++)
-			{
-				Vector2 offset = UnityEngine.Random.insideUnitCircle * zoneRadius;
-				if (NavMesh.SamplePosition(center + new Vector3(offset.x, 0f, offset.y), out var hit, 5f, NavMesh.AllAreas))
-				{
-					destination = hit.position;
-					break;
-				}
+				destination = hit.position;
+				break;
 			}
 		}
 		if (!agent.SetDestination(destination)) patrolFailures++;
@@ -978,19 +697,14 @@ public class MonsterAI : MonoBehaviour
 		if (currentState == newState) return;
 		PlaytestRecorder.Record("monster_state", name, transform.position, currentState + " -> " + newState);
 		currentState = newState;
-		if (newState != State.Flank)
-		{
-			flankCorners = null;
-			agent.stoppingDistance = stoppingDistance;
-		}
-		if (newState != State.Chase) lostSight = false;
-		if (newState != State.Investigate && newState != State.Chase) givingUp = false;
-		if (newState != State.Investigate && newState != State.Stun) searchReason = SearchReason.None;
+		closingIn = false;
+		agent.stoppingDistance = stoppingDistance;
 		switch (newState)
 		{
-		case State.Flank:
+		case State.Block:
 			agent.autoBraking = false;
-			UpdateFlankDestination();
+			nextHintTime = 0f;
+			agent.SetDestination(blockGoal);
 			break;
 		case State.Patrol:
 			agent.autoBraking = false;
@@ -1002,6 +716,7 @@ public class MonsterAI : MonoBehaviour
 			break;
 		case State.Chase:
 			agent.autoBraking = true;
+			nextHintTime = 0f;
 			break;
 		case State.Investigate:
 			agent.autoBraking = true;
@@ -1012,7 +727,7 @@ public class MonsterAI : MonoBehaviour
 			stateTimer = 0f;
 			returnFailures = 0;
 			agent.autoBraking = true;
-			if (zoneCenter != null && agent.isOnNavMesh) agent.SetDestination(zoneCenter.position);
+			if (agent.isOnNavMesh) agent.SetDestination(patrolCenter);
 			break;
 		}
 	}
@@ -1070,7 +785,7 @@ public class MonsterAI : MonoBehaviour
 	private void OnDrawGizmosSelected()
 	{
 		Gizmos.color = Color.yellow;
-		if (!useGlobalNavMesh && zoneCenter != null) Gizmos.DrawWireSphere(zoneCenter.position, zoneRadius);
+		if (hasPatrolCenter) Gizmos.DrawWireSphere(patrolCenter, WanderRadius);
 		Gizmos.color = Color.red;
 		Gizmos.DrawWireSphere(transform.position, sightRange);
 		Gizmos.color = Color.cyan;

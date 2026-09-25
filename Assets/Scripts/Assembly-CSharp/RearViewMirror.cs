@@ -205,7 +205,7 @@ public sealed class RearViewMirror : MonoBehaviour
 
         foreach (MonsterAI monster in MonsterAI.activeMonsters)
         {
-            if (monster == null || monster.IsInStun || monster.IsGivingUp) continue;
+            if (monster == null || monster.IsInStun) continue;
             Vector3 toMonster = Vector3.ProjectOnPlane(monster.transform.position - player.position, Vector3.up);
             float distance = toMonster.magnitude;
             if (distance < .01f || distance > triggerDistance) continue;
@@ -214,7 +214,7 @@ public sealed class RearViewMirror : MonoBehaviour
             if (rearAmount < -.2f) continue;
 
             bool pursuing = monster.CurrentState == MonsterAI.State.Chase ||
-                monster.CurrentState == MonsterAI.State.Flank ||
+                monster.CurrentState == MonsterAI.State.Block ||
                 monster.CurrentState == MonsterAI.State.Investigate;
             Vector3 towardPlayer = -direction;
             float closingSpeed = Vector3.Dot(monster.PlanarVelocity, towardPlayer);
