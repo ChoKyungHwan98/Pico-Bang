@@ -19990,7 +19990,7 @@ Transform:
   m_GameObject: {fileID: 358}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: -1}
+  m_LocalPosition: {x: 0, y: 0, z: -2.8}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -22544,7 +22544,7 @@ Transform:
   m_GameObject: {fileID: 872}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0.5, y: 1.2, z: 0}
+  m_LocalPosition: {x: 0.62, y: 1.7, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -28919,7 +28919,7 @@ Camera:
     height: 1
   near clip plane: 0.3
   far clip plane: 1000
-  field of view: 60
+  field of view: 62
   orthographic: 0
   orthographic size: 5
   m_Depth: -1
@@ -48072,7 +48072,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: -0, z: -0}
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 50, y: -260}
+  m_AnchoredPosition: {x: 50, y: -60}
   m_SizeDelta: {x: 100, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &1933
@@ -48412,7 +48412,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 1}
   m_AnchorMax: {x: 0, y: 1}
   m_AnchoredPosition: {x: 0, y: -0}
-  m_SizeDelta: {x: 315, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0, y: 1}
 --- !u!224 &1950
 RectTransform:
@@ -60596,7 +60596,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   role: 1
-  style: 0
   player: {fileID: 0}
   useGlobalNavMesh: 1
   zoneCenter: {fileID: 1408}
@@ -60618,11 +60617,10 @@ MonoBehaviour:
     m_Bits: 128
   hearingRange: 140
   zoneHearingScale: 0.9
-  noiseAccuracyFalloff: 0.35
-  noiseReactTime: 0.5
-  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
+  idleRetryInterval: 3
+  idleLookSpeed: 45
   showDebugLog: 1
   drawDebugLine: 1
   contactDamageHearts: 1
@@ -60634,23 +60632,8 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  maxSimultaneousChasers: 2
   huntTeamSize: 3
-  teamSwapRatio: 0.6
-  routeOverlapThreshold: 0.45
-  routeNearDistance: 3
-  convergenceExcludeRadius: 8
-  cutCandidateMaxDistance: 18
-  cutCandidateMinDistance: 6
-  cutCandidateMergeDistance: 6
-  swapDistanceMargin: 3
-  crossingAvoidRadius: 6
-  hintBlurRadius: 4
-  pursuitHintBlur: 3
   huntMemory: 8
-  layoutRefreshInterval: 1
-  followDistance: 7
-  followHoldTime: 1
   pursuitPersistence: 3
   cornerCheckTime: 4
   persistenceDecay: 0.7
@@ -60660,26 +60643,19 @@ MonoBehaviour:
   huntFarSpeed: 14
   huntNearDistance: 15
   huntFarDistance: 40
-  detourTimeLimit: 8
-  detourWaypointDistance: 22
-  sideAngleMin: 90
-  scatterAfter: 20
-  scatterTime: 6
-  scatterRejoinBlock: 8
-  handoverDelay: 3
-  teleportUnseenTime: 3
-  teleportMinDistance: 40
-  playerViewAngle: 90
+  flankLeadTime: 2
+  flankRadius: 16
+  flankRecruitRange: 90
+  flankEngageDistance: 18
+  flankSearchTime: 1.5
+  flankMaxMisses: 3
+  flankTimeout: 10
+  flankRotateSeconds: 15
+  queueDistance: 10
+  queueSeconds: 2.5
+  benchSeconds: 5
   jumpDuration: 0.5
   jumpHeight: 1.5
-  ambushEngageRange: 8
-  interceptTimeout: 12
-  dispersalQueueDistance: 10
-  dispersalQueueSeconds: 1
-  roleLockTime: 2
-  waypointReachedDistance: 3
-  finalApproachRefresh: 0.15
-  routeLockDistance: 12
 --- !u!114 &2401
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -61237,7 +61213,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   role: 0
-  style: 0
   player: {fileID: 0}
   useGlobalNavMesh: 0
   zoneCenter: {fileID: 1021}
@@ -61259,11 +61234,10 @@ MonoBehaviour:
     m_Bits: 128
   hearingRange: 50
   zoneHearingScale: 0.9
-  noiseAccuracyFalloff: 0.35
-  noiseReactTime: 0.5
-  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
+  idleRetryInterval: 3
+  idleLookSpeed: 45
   showDebugLog: 1
   drawDebugLine: 1
   contactDamageHearts: 1
@@ -61275,23 +61249,8 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  maxSimultaneousChasers: 2
   huntTeamSize: 3
-  teamSwapRatio: 0.6
-  routeOverlapThreshold: 0.45
-  routeNearDistance: 3
-  convergenceExcludeRadius: 8
-  cutCandidateMaxDistance: 18
-  cutCandidateMinDistance: 6
-  cutCandidateMergeDistance: 6
-  swapDistanceMargin: 3
-  crossingAvoidRadius: 6
-  hintBlurRadius: 4
-  pursuitHintBlur: 3
   huntMemory: 8
-  layoutRefreshInterval: 1
-  followDistance: 7
-  followHoldTime: 1
   pursuitPersistence: 3
   cornerCheckTime: 4
   persistenceDecay: 0.7
@@ -61301,26 +61260,19 @@ MonoBehaviour:
   huntFarSpeed: 14
   huntNearDistance: 15
   huntFarDistance: 40
-  detourTimeLimit: 8
-  detourWaypointDistance: 22
-  sideAngleMin: 90
-  scatterAfter: 20
-  scatterTime: 6
-  scatterRejoinBlock: 8
-  handoverDelay: 3
-  teleportUnseenTime: 3
-  teleportMinDistance: 40
-  playerViewAngle: 90
+  flankLeadTime: 2
+  flankRadius: 16
+  flankRecruitRange: 90
+  flankEngageDistance: 18
+  flankSearchTime: 1.5
+  flankMaxMisses: 3
+  flankTimeout: 10
+  flankRotateSeconds: 15
+  queueDistance: 10
+  queueSeconds: 2.5
+  benchSeconds: 5
   jumpDuration: 0.5
   jumpHeight: 1.5
-  ambushEngageRange: 8
-  interceptTimeout: 12
-  dispersalQueueDistance: 10
-  dispersalQueueSeconds: 1
-  roleLockTime: 2
-  waypointReachedDistance: 3
-  finalApproachRefresh: 0.15
-  routeLockDistance: 12
 --- !u!114 &2421
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -61352,7 +61304,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   role: 0
-  style: 2
   player: {fileID: 0}
   useGlobalNavMesh: 0
   zoneCenter: {fileID: 937}
@@ -61374,11 +61325,10 @@ MonoBehaviour:
     m_Bits: 128
   hearingRange: 50
   zoneHearingScale: 0.9
-  noiseAccuracyFalloff: 0.35
-  noiseReactTime: 0.5
-  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
+  idleRetryInterval: 3
+  idleLookSpeed: 45
   showDebugLog: 1
   drawDebugLine: 1
   contactDamageHearts: 1
@@ -61390,23 +61340,8 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  maxSimultaneousChasers: 2
   huntTeamSize: 3
-  teamSwapRatio: 0.6
-  routeOverlapThreshold: 0.45
-  routeNearDistance: 3
-  convergenceExcludeRadius: 8
-  cutCandidateMaxDistance: 18
-  cutCandidateMinDistance: 6
-  cutCandidateMergeDistance: 6
-  swapDistanceMargin: 3
-  crossingAvoidRadius: 6
-  hintBlurRadius: 4
-  pursuitHintBlur: 3
   huntMemory: 8
-  layoutRefreshInterval: 1
-  followDistance: 7
-  followHoldTime: 1
   pursuitPersistence: 3
   cornerCheckTime: 4
   persistenceDecay: 0.7
@@ -61416,26 +61351,19 @@ MonoBehaviour:
   huntFarSpeed: 14
   huntNearDistance: 15
   huntFarDistance: 40
-  detourTimeLimit: 8
-  detourWaypointDistance: 22
-  sideAngleMin: 90
-  scatterAfter: 20
-  scatterTime: 6
-  scatterRejoinBlock: 8
-  handoverDelay: 3
-  teleportUnseenTime: 3
-  teleportMinDistance: 40
-  playerViewAngle: 90
+  flankLeadTime: 2
+  flankRadius: 16
+  flankRecruitRange: 90
+  flankEngageDistance: 18
+  flankSearchTime: 1.5
+  flankMaxMisses: 3
+  flankTimeout: 10
+  flankRotateSeconds: 15
+  queueDistance: 10
+  queueSeconds: 2.5
+  benchSeconds: 5
   jumpDuration: 0.5
   jumpHeight: 1.5
-  ambushEngageRange: 8
-  interceptTimeout: 12
-  dispersalQueueDistance: 10
-  dispersalQueueSeconds: 1
-  roleLockTime: 2
-  waypointReachedDistance: 3
-  finalApproachRefresh: 0.15
-  routeLockDistance: 12
 --- !u!114 &2423
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -62313,7 +62241,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   role: 0
-  style: 0
   player: {fileID: 0}
   useGlobalNavMesh: 0
   zoneCenter: {fileID: 1379}
@@ -62335,11 +62262,10 @@ MonoBehaviour:
     m_Bits: 128
   hearingRange: 50
   zoneHearingScale: 0.9
-  noiseAccuracyFalloff: 0.35
-  noiseReactTime: 0.5
-  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
+  idleRetryInterval: 3
+  idleLookSpeed: 45
   showDebugLog: 1
   drawDebugLine: 1
   contactDamageHearts: 1
@@ -62351,23 +62277,8 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  maxSimultaneousChasers: 2
   huntTeamSize: 3
-  teamSwapRatio: 0.6
-  routeOverlapThreshold: 0.45
-  routeNearDistance: 3
-  convergenceExcludeRadius: 8
-  cutCandidateMaxDistance: 18
-  cutCandidateMinDistance: 6
-  cutCandidateMergeDistance: 6
-  swapDistanceMargin: 3
-  crossingAvoidRadius: 6
-  hintBlurRadius: 4
-  pursuitHintBlur: 3
   huntMemory: 8
-  layoutRefreshInterval: 1
-  followDistance: 7
-  followHoldTime: 1
   pursuitPersistence: 3
   cornerCheckTime: 4
   persistenceDecay: 0.7
@@ -62377,26 +62288,19 @@ MonoBehaviour:
   huntFarSpeed: 14
   huntNearDistance: 15
   huntFarDistance: 40
-  detourTimeLimit: 8
-  detourWaypointDistance: 22
-  sideAngleMin: 90
-  scatterAfter: 20
-  scatterTime: 6
-  scatterRejoinBlock: 8
-  handoverDelay: 3
-  teleportUnseenTime: 3
-  teleportMinDistance: 40
-  playerViewAngle: 90
+  flankLeadTime: 2
+  flankRadius: 16
+  flankRecruitRange: 90
+  flankEngageDistance: 18
+  flankSearchTime: 1.5
+  flankMaxMisses: 3
+  flankTimeout: 10
+  flankRotateSeconds: 15
+  queueDistance: 10
+  queueSeconds: 2.5
+  benchSeconds: 5
   jumpDuration: 0.5
   jumpHeight: 1.5
-  ambushEngageRange: 8
-  interceptTimeout: 12
-  dispersalQueueDistance: 10
-  dispersalQueueSeconds: 1
-  roleLockTime: 2
-  waypointReachedDistance: 3
-  finalApproachRefresh: 0.15
-  routeLockDistance: 12
 --- !u!114 &2454
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -62428,7 +62332,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   role: 0
-  style: 1
   player: {fileID: 0}
   useGlobalNavMesh: 0
   zoneCenter: {fileID: 1321}
@@ -62450,11 +62353,10 @@ MonoBehaviour:
     m_Bits: 128
   hearingRange: 50
   zoneHearingScale: 0.9
-  noiseAccuracyFalloff: 0.35
-  noiseReactTime: 0.5
-  noiseReactCooldown: 8
   investigateLookTime: 3
   investigateTurnSpeed: 120
+  idleRetryInterval: 3
+  idleLookSpeed: 45
   showDebugLog: 1
   drawDebugLine: 1
   contactDamageHearts: 1
@@ -62466,23 +62368,8 @@ MonoBehaviour:
   showStunSparks: 1
   stunArcCount: 5
   stunArcJaggedness: 0.16
-  maxSimultaneousChasers: 2
   huntTeamSize: 3
-  teamSwapRatio: 0.6
-  routeOverlapThreshold: 0.45
-  routeNearDistance: 3
-  convergenceExcludeRadius: 8
-  cutCandidateMaxDistance: 18
-  cutCandidateMinDistance: 6
-  cutCandidateMergeDistance: 6
-  swapDistanceMargin: 3
-  crossingAvoidRadius: 6
-  hintBlurRadius: 4
-  pursuitHintBlur: 3
   huntMemory: 8
-  layoutRefreshInterval: 1
-  followDistance: 7
-  followHoldTime: 1
   pursuitPersistence: 3
   cornerCheckTime: 4
   persistenceDecay: 0.7
@@ -62492,26 +62379,19 @@ MonoBehaviour:
   huntFarSpeed: 14
   huntNearDistance: 15
   huntFarDistance: 40
-  detourTimeLimit: 8
-  detourWaypointDistance: 22
-  sideAngleMin: 90
-  scatterAfter: 20
-  scatterTime: 6
-  scatterRejoinBlock: 8
-  handoverDelay: 3
-  teleportUnseenTime: 3
-  teleportMinDistance: 40
-  playerViewAngle: 90
+  flankLeadTime: 2
+  flankRadius: 16
+  flankRecruitRange: 90
+  flankEngageDistance: 18
+  flankSearchTime: 1.5
+  flankMaxMisses: 3
+  flankTimeout: 10
+  flankRotateSeconds: 15
+  queueDistance: 10
+  queueSeconds: 2.5
+  benchSeconds: 5
   jumpDuration: 0.5
   jumpHeight: 1.5
-  ambushEngageRange: 8
-  interceptTimeout: 12
-  dispersalQueueDistance: 10
-  dispersalQueueSeconds: 1
-  roleLockTime: 2
-  waypointReachedDistance: 3
-  finalApproachRefresh: 0.15
-  routeLockDistance: 12
 --- !u!114 &2456
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -67212,7 +67092,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 94efbd4770384a90b85783f132314a33, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ShoulderCameraRig
-  normalDistance: 2.35
+  normalDistance: 2.8
   sprintExtraDistance: 0.35
   downwardDistanceBonus: 0.45
   maxDownwardBoomPitch: 22
@@ -67224,6 +67104,8 @@ MonoBehaviour:
   shoulderEscape: 0.5
   verticalEscape: 0.32
   hidePlayerDistance: 0.62
+  anticipation: 0.9
+  approachSmoothTime: 0.09
   collisionMask:
     serializedVersion: 2
     m_Bits: 1281
@@ -67799,6 +67681,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PortfolioCaptureView
   mapFirst: 0
   showLabels: 1
+  decisionLifetime: 7
+  maxDecisions: 5
+  noiseLifetime: 2.5
 --- !u!1 &1705474439
 GameObject:
   m_ObjectHideFlags: 0
@@ -68866,6 +68751,10 @@ MonoBehaviour:
   idleColor: {r: 1, g: 1, b: 1, a: 0.9}
   hitColor: {r: 1, g: 0.55, b: 0.1, a: 1}
   targetColor: {r: 0.45, g: 1, b: 0.92, a: 1}
+  blockedColor: {r: 1, g: 0.3, b: 0.3, a: 1}
+  coolingAlpha: 0.35
+  readyPopScale: 1.35
+  outlineColor: {r: 0, g: 0, b: 0, a: 0.75}
   aimRange: 100
   hitFlashTime: 0.18
 --- !u!114 &2041413169

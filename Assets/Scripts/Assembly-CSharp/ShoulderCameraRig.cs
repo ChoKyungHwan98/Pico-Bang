@@ -51,6 +51,8 @@ public sealed class ShoulderCameraRig : MonoBehaviour
         if (ground >= 0) collisionMask |= 1 << ground;
         // 달릴 때 바람 속도선 — 씬을 고치지 않고 어깨 카메라가 있는 모든 씬에 붙인다
         if (GetComponent<SpeedLinesFx>() == null) gameObject.AddComponent<SpeedLinesFx>();
+        if (controller != null && controller.GetComponentInChildren<CharacterWindFx>() == null)
+            controller.gameObject.AddComponent<CharacterWindFx>();
         playerRenderers = controller != null ? controller.GetComponentsInChildren<Renderer>(true) : null;
         originalLocalPosition = transform.localPosition;
         normalFieldOfView = gameplayCamera != null ? gameplayCamera.fieldOfView : 60f;
