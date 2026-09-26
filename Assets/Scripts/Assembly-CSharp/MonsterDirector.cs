@@ -459,7 +459,6 @@ public class MonsterDirector : MonoBehaviour
         nextPlan = Time.time + PlanInterval;
         hunters.RemoveAll(m => m == null || !m.isActiveAndEnabled);
         BuildExits();
-        Recruit();
         EnforceCap();
         AssignRoles();
         ApplySpeeds();
@@ -469,38 +468,50 @@ public class MonsterDirector : MonoBehaviour
     private bool Sees(MonsterAI m) => m.IsSeeingPlayer || Time.time - m.SeenPlayerAt < SeeGrace;
 
     /// <summary>
-    /// 누가 본 지 recruitWindow초 안이면, 사냥에 안 낀 몬스터를 maxHunters까지 부른다.
-    /// 부를 수 있는 몬스터 = 플레이어 곁을 지나지 않고 출구에 닿는 몬스터(뒤에서만 올 수 있으면 부르지 않는다). 가장 빨리 닿는 몬스터부터.
-    /// 방금(releaseCooldown초) 사냥에서 빠진 몬스터는 부르지 않는다.
+    /// 부르기(출구 배정 뒤): 누가 본 지 recruitWindow초 안이고 사냥이 maxHunters보다 적으면, 아직 비어 있는 출구마다
+    /// 그 출구에 플레이어 곁을 지나지 않고 가장 빨리 닿는 사냥 밖 몬스터를 불러 곧바로 맡긴다.
+    /// 막을 출구가 있는 몬스터만 부른다 — 불렀다가 바로 돌려보내는 일이 없게(09-26 15:14 판 부름 64 / 빠짐 69).
+    /// 방금(ReleaseCooldown초) 사냥에서 빠진 몬스터는 부르지 않는다.
     /// </summary>
-    private void Recruit()
+    private void RecruitIntoOpenExits(List<int> open, HashSet<int> taken)
     {
-        if (Time.time - sightTime > recruitWindow || exits.Count == 0) return;
+        if (Time.time - sightTime > recruitWindow) return;
         Vector3 p = PlayerPosition;
-        while (hunters.Count < maxHunters)
+        var free = new List<MonsterAI>();
+        foreach (var m in MonsterAI.activeMonsters)
         {
-            MonsterAI best = null;
-            float bestLength = float.PositiveInfinity;
-            foreach (var m in MonsterAI.activeMonsters)
+            if (m == null || hunters.Contains(m) || !m.CanTakeOrders) continue;
+            if (releasedAt.TryGetValue(m, out float released) && Time.time - released < ReleaseCooldown) continue;
+            var st = m.CurrentState;
+            if (st != MonsterAI.State.Patrol && st != MonsterAI.State.Return && st != MonsterAI.State.Idle && st != MonsterAI.State.Investigate) continue;
+            free.Add(m);
+        }
+        while (hunters.Count < maxHunters && free.Count > 0)
+        {
+            MonsterAI bestM = null;
+            int bestI = -1;
+            Vector3[] bestPath = null;
+            float bestC = float.PositiveInfinity;
+            foreach (int i in open)
             {
-                if (m == null || hunters.Contains(m) || !m.CanTakeOrders) continue;
-                if (releasedAt.TryGetValue(m, out float released) && Time.time - released < ReleaseCooldown) continue;
-                var st = m.CurrentState;
-                if (st != MonsterAI.State.Patrol && st != MonsterAI.State.Return && st != MonsterAI.State.Idle && st != MonsterAI.State.Investigate) continue;
-                foreach (var e in exits)
+                if (taken.Contains(i)) continue;
+                foreach (var m in free)
                 {
-                    var path = ComputePath(m, e.point);
+                    var path = ComputePath(m, exits[i].point);
                     if (path == null || PassesNear(path, p, 5f)) continue;
-                    float length = Length(path);
-                    if (length < bestLength) { bestLength = length; best = m; }
+                    float c = Length(path) / Mathf.Max(1f, blockSpeed) - exits[i].weight;
+                    if (c < bestC) { bestC = c; bestM = m; bestI = i; bestPath = (Vector3[])path.Clone(); }
                 }
             }
-            if (best == null) break;
-            hunters.Add(best);
-            roles[best] = Role.None;
-            noiseCheckers.Remove(best);
-            ringSlots.Remove(best);
-            Decide(best, "recruit", "사냥에 부름 (출구까지 " + bestLength.ToString("F0") + "m, 사냥 " + hunters.Count + "마리)");
+            if (bestM == null) return;
+            free.Remove(bestM);
+            taken.Add(bestI);
+            hunters.Add(bestM);
+            noiseCheckers.Remove(bestM);
+            ringSlots.Remove(bestM);
+            roles[bestM] = Role.None;
+            Decide(bestM, "recruit", "빈 출구로 부름 (" + Length(bestPath).ToString("F0") + "m, 사냥 " + hunters.Count + "마리)");
+            SendToExit(bestM, bestI, bestPath);
         }
     }
 
@@ -599,7 +610,6 @@ public class MonsterDirector : MonoBehaviour
 
     private void AssignExits(List<MonsterAI> blockers, List<MonsterAI> chasers)
     {
-        if (blockers.Count == 0) return;
         Vector3 p = PlayerPosition;
         var open = new List<int>();
         for (int i = 0; i < exits.Count; i++) if (!exits[i].blocked) open.Add(i);
@@ -653,6 +663,7 @@ public class MonsterDirector : MonoBehaviour
             releasedAt[m] = Time.time;
             SendToRing(m, "막을 출구 없음(뒤에서만 갈 수 있음) → 사냥에서 빠짐");
         }
+        RecruitIntoOpenExits(open, taken);
     }
 
     private void SendToExit(MonsterAI m, int index, Vector3[] path)
@@ -848,9 +859,9 @@ public class MonsterDirector : MonoBehaviour
     private bool FindRingSlot(Vector3 p, float angle, float spread, out Vector3 slot)
     {
         slot = Vector3.zero;
-        float bestScore = float.PositiveInfinity;
         Vector3 eye = p + Vector3.up * 1.5f;
         float mid = (ringMin + ringMax) * .5f;
+        var scored = new List<KeyValuePair<float, Vector3>>();
         foreach (var a in anchors)
         {
             Vector3 flat = Vector3.ProjectOnPlane(a - p, Vector3.up);
@@ -859,10 +870,21 @@ public class MonsterDirector : MonoBehaviour
             float diff = Mathf.Abs(Mathf.DeltaAngle(angle, Mathf.Atan2(flat.x, flat.z) * Mathf.Rad2Deg));
             if (diff > spread) continue;
             bool seen = !Physics.Linecast(eye, a + Vector3.up * 1.3f, ObstacleMask, QueryTriggerInteraction.Ignore);
-            float score = Mathf.Abs(d - mid) + diff * .2f + (seen ? 30f : 0f);
-            if (score < bestScore) { bestScore = score; slot = a; }
+            scored.Add(new KeyValuePair<float, Vector3>(Mathf.Abs(d - mid) + diff * .2f + (seen ? 30f : 0f), a));
         }
-        return bestScore < float.PositiveInfinity;
+        scored.Sort((x, y) => x.Key.CompareTo(y.Key));
+        // 플레이어에게서 길로 이어진 자리만(떨어진 지붕·섬에 두면 몬스터가 갈 길이 없어 멈춘다 — 09-26 15:14 판 Global 멈춤 3번).
+        // 길이가 곧은 거리의 2배를 넘는 자리(벽 너머 멀리 돌아가야 하는 곳)도 뺀다
+        if (!NavMesh.SamplePosition(p, out var from, 3f, NavMesh.AllAreas)) return false;
+        for (int i = 0; i < scored.Count && i < 6; i++)
+        {
+            Vector3 a = scored[i].Value;
+            if (!NavMesh.CalculatePath(from.position, a, NavMesh.AllAreas, pathBuffer) || pathBuffer.status != NavMeshPathStatus.PathComplete) continue;
+            if (Length(pathBuffer.corners) > Vector3.Distance(from.position, a) * 2f + 10f) continue;
+            slot = a;
+            return true;
+        }
+        return false;
     }
 
     private LayerMask ObstacleMask
