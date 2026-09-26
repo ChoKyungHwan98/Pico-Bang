@@ -300,44 +300,10 @@ def cmd_summary(tr):
     print('\n의심 장면 %d개 (화면 타이머 기준):' % len(found))
     for t, clock, who, text in found:
         print('  %s  %-6s %s' % (clock, who, text))
-    encircle_report(tr)
     zone_report(tr)
     marks = [e for e in tr.events if e['type'] == 'qa_mark']
     if marks:
         print('\nF8 표시:', ', '.join(e['clock'] for e in marks))
-
-
-def encircle_report(tr):
-    """
-    포위 지표(사냥 중일 때만) — 핵심 경험 "5마리가 여러 마리처럼 포위하듯 쫓아옴"을 숫자로.
-    - 20m 안 사냥 몬스터: 팀 3마리 중 실제로 가까이 있는 수
-    - 2마리+ 붙음 / 그중 양쪽: 20m 안 두 마리 이상일 때, 플레이어 기준 반대쪽(내적 < 0)에서 오는 쌍이 있는 비율
-    - 우회 성공: 우회 배정 중 옆에서 플레이어를 보고 협공으로 바뀐 비율(engage / (flank_assign + flank_recruit))
-    """
-    near, two, both = [], 0, 0
-    for f in tr.frames:
-        if not f.get('hunting'):
-            continue
-        p = f['player']['position']
-        vs = []
-        for m in f['monsters']:
-            if not m.get('role'):
-                continue
-            dx, dz = m['position']['x'] - p['x'], m['position']['z'] - p['z']
-            d = math.hypot(dx, dz)
-            if d < 20:
-                vs.append((dx / d, dz / d) if d > .1 else (0.0, 0.0))
-        near.append(len(vs))
-        if len(vs) >= 2:
-            two += 1
-            if any(vs[i][0] * vs[j][0] + vs[i][1] * vs[j][1] < 0 for i in range(len(vs)) for j in range(i + 1, len(vs))):
-                both += 1
-    codes = Counter(decision_code(e) for e in tr.events if e['type'] == 'decision')
-    assigned = codes['flank_assign'] + codes['flank_recruit']
-    n = max(1, len(near))
-    print('\n포위 지표(사냥 중): 20m 안 사냥 몬스터 평균 %.1f · 2마리+ 붙음 %d%% · 그중 양쪽에서 %d%% · 우회 성공 %d/%d(%d%%) · 사냥 시작 %d / 끝 %d · 우회 교대 %d' % (
-        sum(near) / n, 100 * two // n, 100 * both // max(1, two), codes['engage'], assigned, 100 * codes['engage'] // max(1, assigned),
-        codes['hunt_start'], codes['hunt_end'], codes['flank_swap'] + codes['flank_rotate']))
 
 
 # 구역 기록(zone 이벤트)이 없는 옛 기록용: 포트폴리오 씬 구역 (2026-09-25 씬 값)
