@@ -6,9 +6,9 @@ using UnityEngine.AI;
 
 /// <summary>
 /// 몬스터의 몸(뇌 1). 눈·귀·이동·감전·점프와 상태 전환만 한다.
-/// 누가 쫓고 누가 출구를 막을지, 사냥에 안 낀 몬스터가 어디를 순찰할지는 감독(<see cref="MonsterDirector"/>, 뇌 2)이 정한다.
-/// 몸은 본 것·도착·감전을 감독에게 알리고, 감독이 준 명령(추격·출구 막기·소리 확인·둘레 순찰)을 수행한다.
-/// 보이면 쫓는 것만은 몸이 스스로 한다 — 발견은 눈으로만.
+/// 추격은 몸만의 것: 눈으로 보면 쫓고, 시야가 끊기면 마지막으로 본 자리까지만 가 보고 끝낸다.
+/// 추격 대상·위치를 쓰는 곳은 시야 판정 하나뿐이다 — 감독·소리는 추격을 시작하거나 늘리지 못한다.
+/// 쫓지 않을 때는 감독(<see cref="MonsterDirector"/>, 뇌 2)이 준 자리(길목·소리 확인·둘레 순찰)로 간다.
 /// </summary>
 [RequireComponent(typeof(NavMeshAgent))]
 [RequireComponent(typeof(Animator))]
@@ -122,13 +122,13 @@ public class MonsterAI : MonoBehaviour
 
 	public float jumpHeight = 1.5f;
 
-	private const float HintInterval = 0.5f;
 	private const float TouchSightRange = 2f;
 	private const int MaxPathFailures = 3;
 	private const float IdleSnapDistance = 2f;
 	private const float WanderRadius = 10f;
 	private const float FarFromPatrol = 20f;
-	private const float LostWithoutDirector = 3f;
+	private const float DefaultLostChaseTime = 2f;
+	private const float LastSeenReach = 1.5f;
 
 	private NavMeshAgent agent;
 	private Animator animator;
@@ -151,19 +151,25 @@ public class MonsterAI : MonoBehaviour
 	private Vector3 patrolCenter;
 	private bool hasPatrolCenter;
 
-	// 추격 · 출구 막기
-	private Vector3 lastKnownPos;
-	private float huntSpeed = -1f;
-	private float nextHintTime;
+	// 추격: 마지막으로 "본" 자리(소리로는 바뀌지 않는다)
+	private Vector3 lastSeenPos;
 	private float lostSightAt = float.NegativeInfinity;
+	private bool reportedBlindChase;
+	private float huntSpeed = -1f;
+
+	// 소리 확인 지점
+	private Vector3 searchPoint;
+
+	// 길목: 도착하면 플레이어가 올 쪽을 보고 기다린다
 	private Vector3 blockGoal;
-	private bool closingIn;
+	private Vector3 blockFace;
+	private bool holding;
 
 	public State CurrentState => currentState;
 	public bool IsInStun => currentState == State.Stun;
 	public bool IsTraversingLink => isJumping;
 	public bool IsBlocking => currentState == State.Block;
-	public bool IsClosingIn => currentState == State.Block && closingIn;
+	public bool IsHolding => currentState == State.Block && holding;
 	public bool IsSeeingPlayer { get; private set; }
 	public float SeenPlayerAt { get; private set; } = float.NegativeInfinity;
 	public bool CanTakeOrders => !isStunned && !isJumping && agent != null && agent.enabled && agent.isOnNavMesh;
@@ -203,11 +209,11 @@ public class MonsterAI : MonoBehaviour
 			switch (currentState)
 			{
 			case State.Patrol: return "순찰";
-			case State.Chase: return IsSeeingPlayer ? "추격" : "흔적 추적";
+			case State.Chase: return IsSeeingPlayer ? "추격" : "본 자리 확인";
 			case State.Investigate: return HasArrived() ? "둘러봄" : "소리 확인";
 			case State.Return: return "자리 이동";
 			case State.Stun: return "감전";
-			case State.Block: return closingIn ? "출구에서 조여 듦" : "출구로";
+			case State.Block: return holding ? "길목에서 대기" : "길목으로";
 			case State.Idle: return "멈춤";
 			}
 			return currentState.ToString();
@@ -261,7 +267,7 @@ public class MonsterAI : MonoBehaviour
 		isStunned = isJumping = false;
 		damageTimer = 0f;
 		huntSpeed = -1f;
-		closingIn = false;
+		holding = false;
 		hasPatrolCenter = false;
 		IsSeeingPlayer = false;
 		if (animator != null)
@@ -287,28 +293,17 @@ public class MonsterAI : MonoBehaviour
 	//  감독의 명령
 	// ────────────────────────────────────────────────
 
-	/// <summary>추격: 보이면 플레이어에게 곧장, 안 보이면 감독이 아는 위치(흔적)로.</summary>
-	public void CommandChase(Vector3 known)
-	{
-		if (!CanTakeOrders) return;
-		lastKnownPos = known;
-		if (currentState != State.Chase)
-		{
-			ChangeState(State.Chase);
-			if (!IsSeeingPlayer) lostSightAt = Time.time;
-		}
-		if (!IsSeeingPlayer) agent.SetDestination(known);
-	}
-
-	/// <summary>출구 막기: 감독이 정한 출구로 달려간다. 도착하면 서지 않고 플레이어 쪽으로 조여 든다.</summary>
-	public void CommandBlock(Vector3 goal)
+	/// <summary>길목: 감독이 정한 가려진 자리로 달려가, 도착하면 face 쪽(플레이어가 올 쪽)을 보고 기다린다. 보면 그때 스스로 쫓는다.</summary>
+	public void CommandBlock(Vector3 goal, Vector3 face)
 	{
 		if (!CanTakeOrders) return;
 		bool sameGoal = currentState == State.Block && Vector3.Distance(goal, blockGoal) < 3f;
 		blockGoal = goal;
+		blockFace = face;
 		if (currentState != State.Block) { ChangeState(State.Block); return; }
 		if (sameGoal) return;
-		closingIn = false;
+		holding = false;
+		agent.isStopped = false;
 		agent.SetDestination(goal);
 	}
 
@@ -316,7 +311,7 @@ public class MonsterAI : MonoBehaviour
 	public void CommandSearch(Vector3 point)
 	{
 		if (!CanTakeOrders || currentState == State.Chase || currentState == State.Block) return;
-		lastKnownPos = point;
+		searchPoint = point;
 		if (currentState == State.Investigate)
 		{
 			stateTimer = investigateLookTime;
@@ -386,6 +381,7 @@ public class MonsterAI : MonoBehaviour
 		if (canSee)
 		{
 			SeenPlayerAt = Time.time;
+			lastSeenPos = player.position;
 			Director?.ReportSighting(this, player.position);
 		}
 
@@ -419,7 +415,7 @@ public class MonsterAI : MonoBehaviour
 			agent.acceleration = chaseAcceleration;
 			break;
 		case State.Block:
-			agent.speed = closingIn && Director != null ? Director.CloseInSpeed : HuntMoveSpeed;
+			agent.speed = HuntMoveSpeed;
 			agent.acceleration = chaseAcceleration;
 			break;
 		case State.Investigate:
@@ -430,11 +426,14 @@ public class MonsterAI : MonoBehaviour
 		}
 	}
 
-	/// <summary>보이면 쫓는다. 감독에게는 ReportSighting으로 이미 알렸다(사냥에 들어감).</summary>
+	/// <summary>
+	/// 추격에 들어가는 유일한 길: 지금 눈으로 보고 있을 때. 감독에게는 ReportSighting으로 이미 알렸다.
+	/// </summary>
 	private bool StartChaseOnSight(bool canSee)
 	{
 		if (!canSee) return false;
-		lastKnownPos = player.position;
+		lastSeenPos = player.position;
+		PlaytestRecorder.Record("chase_start", name, transform.position, "sight;from=" + currentState, player.position);
 		ChangeState(State.Chase);
 		return true;
 	}
@@ -457,53 +456,56 @@ public class MonsterAI : MonoBehaviour
 	}
 
 	/// <summary>
-	/// 추격. 보이면 플레이어에게 곧장. 안 보이면 감독이 아는 위치(흔적)로 간다 —
-	/// 흔적을 쫓을지 출구로 돌릴지, 사냥을 끝낼지는 감독이 정한다.
+	/// 추격. 보이면 플레이어에게 곧장. 시야가 끊기면 마지막으로 본 자리까지만 가 보고(최대 lostChaseTime초),
+	/// 거기서도 못 보면 추격 끝 — 감독에게 알리고 감독이 다음 자리를 준다. 소리는 이 자리를 바꾸지 않는다.
 	/// </summary>
 	private void ProcessChase(bool canSee)
 	{
 		if (canSee)
 		{
-			lastKnownPos = player.position;
+			reportedBlindChase = false;
 			agent.SetDestination(player.position);
 			return;
 		}
-		if (Time.time >= nextHintTime)
+		agent.SetDestination(lastSeenPos);
+		float lostFor = Time.time - lostSightAt;
+		float limit = Director != null ? Director.LostChaseTime : DefaultLostChaseTime;
+		bool reached = Vector3.Distance(transform.position, lastSeenPos) <= LastSeenReach;
+		if (lostFor > limit + .5f && !reportedBlindChase)
 		{
-			nextHintTime = Time.time + HintInterval;
-			if (Director != null && Director.TryGetPursuitHint(out Vector3 hint)) lastKnownPos = hint;
-			agent.SetDestination(lastKnownPos);
+			// 여기까지 오면 버그다: 못 본 채 추격이 이어지고 있다(QA 도구가 0인지 센다)
+			reportedBlindChase = true;
+			PlaytestRecorder.Record("chase_without_sight", name, transform.position, "lost=" + lostFor.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
 		}
-		// 감독이 없으면(테스트) 잠시 뒤 둘러보기로
-		if (Director == null && Time.time - lostSightAt > LostWithoutDirector) ChangeState(State.Investigate);
+		if (!reached && lostFor < limit) return;
+		PlaytestRecorder.Record("chase_end", name, transform.position,
+			"lost=" + lostFor.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + (reached ? ";reached" : ";timeout"), lastSeenPos);
+		if (Director != null) Director.ReportChaseEnded(this, lostFor);
+		else ChangeState(State.Patrol);
+		// 감독이 새 자리를 못 줬다면(예: 길 없음) 추격 상태로 남지 않는다
+		if (currentState == State.Chase) ChangeState(State.Patrol);
 	}
 
 	/// <summary>
-	/// 출구 막기. 출구까지 달려가고, 도착하면 멈추지 않고 감독이 아는 위치로 천천히 조여 든다.
-	/// 가는 중이든 조여 드는 중이든 플레이어가 보이면 감독에게 묻고 달려든다(같은 쪽 뒤라면 출구를 지킨다).
+	/// 길목. 감독이 준 가려진 자리까지 달려가고, 도착하면 멈춰서 플레이어가 올 쪽을 보고 기다린다(조여 들지 않는다).
+	/// 보이면 그때 스스로 쫓는다.
 	/// </summary>
 	private void ProcessBlock(bool canSee)
 	{
-		if (canSee && Director != null && Director.RequestEngage(this))
-		{
-			lastKnownPos = player.position;
-			ChangeState(State.Chase);
-			return;
-		}
-		if (!agent.pathPending && agent.pathStatus == NavMeshPathStatus.PathInvalid && !closingIn)
+		if (StartChaseOnSight(canSee)) return;
+		if (!holding && !agent.pathPending && agent.pathStatus == NavMeshPathStatus.PathInvalid)
 		{
 			Director?.ReportBlockFailed(this);
 			return;
 		}
-		if (!closingIn)
+		if (!holding)
 		{
-			if (Vector3.Distance(transform.position, blockGoal) > 2.5f && !HasArrived()) return;
-			closingIn = true;
-			nextHintTime = 0f;
+			if (Vector3.Distance(transform.position, blockGoal) > 2f && !HasArrived()) return;
+			holding = true;
+			agent.ResetPath();
 		}
-		if (Time.time < nextHintTime) return;
-		nextHintTime = Time.time + HintInterval;
-		if (Director != null && Director.TryGetPursuitHint(out Vector3 hint)) agent.SetDestination(hint);
+		if (blockFace.sqrMagnitude > .01f)
+			transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.LookRotation(blockFace), investigateTurnSpeed * Time.deltaTime);
 	}
 
 	private void ProcessInvestigate(bool canSee)
@@ -649,8 +651,8 @@ public class MonsterAI : MonoBehaviour
 		isStunned = false;
 		// 충돌 복구만 따로 기다린다. AI는 곧바로 깨어난다
 		if (playerPassThrough) StartCoroutine(RestoreCollisionWhenClear());
-		// 일단 제자리에서 둘러본다 — 감독이 곧바로 다음 일을 정한다(사냥 중이면 다시 배정, 아니면 맞은 쪽 확인)
-		lastKnownPos = transform.position;
+		// 일단 제자리에서 둘러본다 — 보이면 쫓고, 아니면 감독이 둘레로 보낸다(맞은 쪽으로 가는 것도 흔적 추적이라 하지 않는다)
+		searchPoint = transform.position;
 		currentState = State.Investigate;
 		stateTimer = investigateLookTime;
 		if (agent.isOnNavMesh) agent.SetDestination(transform.position);
@@ -663,7 +665,7 @@ public class MonsterAI : MonoBehaviour
 			Director?.ReportSighting(this, player.position);
 			StartChaseOnSight(true);
 		}
-		else Director?.ReportRecovered(this, shooterPosition);
+		else Director?.ReportRecovered(this);
 	}
 
 	// ────────────────────────────────────────────────
@@ -697,13 +699,12 @@ public class MonsterAI : MonoBehaviour
 		if (currentState == newState) return;
 		PlaytestRecorder.Record("monster_state", name, transform.position, currentState + " -> " + newState);
 		currentState = newState;
-		closingIn = false;
+		holding = false;
 		agent.stoppingDistance = stoppingDistance;
 		switch (newState)
 		{
 		case State.Block:
-			agent.autoBraking = false;
-			nextHintTime = 0f;
+			agent.autoBraking = true;
 			agent.SetDestination(blockGoal);
 			break;
 		case State.Patrol:
@@ -716,12 +717,12 @@ public class MonsterAI : MonoBehaviour
 			break;
 		case State.Chase:
 			agent.autoBraking = true;
-			nextHintTime = 0f;
+			reportedBlindChase = false;
 			break;
 		case State.Investigate:
 			agent.autoBraking = true;
 			stateTimer = investigateLookTime;
-			if (agent.isOnNavMesh) agent.SetDestination(lastKnownPos);
+			if (agent.isOnNavMesh) agent.SetDestination(searchPoint);
 			break;
 		case State.Return:
 			stateTimer = 0f;

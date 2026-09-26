@@ -644,7 +644,7 @@ public class AITestDebug : MonoBehaviour
 				foreach (MonsterAI t in d.DebugTeam) { if (t != null) { names.Add(t.name.Replace("Monster_", "")); } }
 				hunt = "사냥 팀 " + string.Join(", ", names);
 			}
-			sb.Append("<b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (보면 모두 추격, 나머지는 출구 막기)");
+			sb.Append("<b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (보면 추격, 못 보면 본 자리까지만 · 나머지는 길목·둘레)");
 			if (d.HasSighting)
 			{
 				sb.Append(" · 마지막 목격 <b>" + d.SightingAge.ToString("F1") + "초 전</b> (" + d.SightingSpotterName.Replace("Monster_", "") + ")");
@@ -662,7 +662,7 @@ public class AITestDebug : MonoBehaviour
 				+ (route.Length > 0 ? "  <b>" + route + "</b>" : ""));
 		}
 		sb.Append("<color=#8CD98C>순찰</color> <color=#FF9A1A>이동</color> <color=#FFE633>수색</color> <color=#FF4040>추격</color> "
-			+ "<color=#D966FF>출구</color> <color=#4DCCFF>자리 이동</color> 기절 · Scene뷰: 색선=배정 경로, 큰원=경유지, 머리위원=최종접근, 플레이어둘레원=겹침제외 · ov=겹침률");
+			+ "<color=#D966FF>길목</color> <color=#4DCCFF>자리 이동</color> 기절 · Scene뷰: 색선=배정 경로, 큰원=경유지, 머리위원=최종접근, 플레이어둘레원=겹침제외 · ov=겹침률");
 		GUI.Box(new Rect(10, 10, 640, 80 + MonsterAI.activeMonsters.Count * 20 + 20), sb.ToString(), panelStyle);
 	}
 

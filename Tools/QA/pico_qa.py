@@ -302,7 +302,10 @@ def cmd_summary(tr):
     for t, clock, who, text in found:
         print('  %s  %-6s %s' % (clock, who, text))
     encircle_report(tr)
-    if 'exit-net' in tr.header.get('aiPolicy', ''):
+    policy = tr.header.get('aiPolicy', '')
+    if 'stage' in policy:
+        chase_report(tr)
+    if 'exit-net' in policy or 'stage' in policy:
         ring_report(tr)
     else:
         zone_report(tr)
@@ -367,6 +370,80 @@ def encircle_report(tr):
     print('포위망: 막힌 출구 %d%% · 출구에서 달려듦 %d · 한 방향 한 추격자로 출구행 %d · 뒤에서만 와서 빠짐 %d · 재배치 %d · 소리 확인 %d · 사냥 사이 간격 %s' % (
         100 * blocked // max(1, total), codes['engage'], codes['same_side_split'] + codes['engage_denied_same_side'], dropped,
         codes['relocate'], codes['noise_call'], ('평균 %.0f초(%d번)' % (sum(gaps) / len(gaps), len(gaps))) if gaps else '-'))
+
+
+def player_direction(tr, t):
+    """t 무렵 플레이어가 실제로 움직인 방향(0.5초 동안의 위치 변화). 멈춰 있으면 None."""
+    a, b = tr.frame_at(t - .5), tr.frame_at(t)
+    if not a or not b:
+        return None
+    dx = b['player']['position']['x'] - a['player']['position']['x']
+    dz = b['player']['position']['z'] - a['player']['position']['z']
+    n = math.hypot(dx, dz)
+    return (dx / n, dz / n) if n > .5 else None
+
+
+def contact_side(tr, e):
+    """추격 시작 순간 몬스터가 플레이어 진행 방향 기준 어디(앞·옆·뒤)에 있었나."""
+    d = player_direction(tr, e['t'])
+    f = tr.frame_at(e['t'])
+    if d is None or not f:
+        return '?'
+    p = f['player']['position']
+    vx, vz = e['position']['x'] - p['x'], e['position']['z'] - p['z']
+    n = math.hypot(vx, vz)
+    if n < .1:
+        return '?'
+    cos = (vx * d[0] + vz * d[1]) / n
+    return '앞' if cos >= math.cos(math.radians(45)) else '뒤' if cos <= -math.cos(math.radians(45)) else '옆'
+
+
+def chase_report(tr):
+    """
+    끝나는 추격(2026-09-26 리서치 반영): 몬스터별 추격 시작(chase_start)·끝(chase_end) 기록으로 본다.
+    - 버그 판정(반드시 0): 눈으로 보지 않고 시작한 추격, 못 본 채 이어진 추격(chase_without_sight)
+    - 한 추격 길이, 시야 끊김 → 끝, 추격 끝 → 다음 새 마주침, 같은 몬스터 재등장 간격
+    - 처음 마주친 방향(앞·옆·뒤)과 8초 안 방향 다양성
+    """
+    starts = [e for e in tr.events if e['type'] == 'chase_start']
+    ends = [e for e in tr.events if e['type'] == 'chase_end']
+    blind = [e for e in tr.events if e['type'] == 'chase_without_sight']
+    unsighted = [e for e in starts if not e.get('detail', '').startswith('sight')]
+    print('\n추격(몬스터별): 시작 %d · 끝 %d · 버그 판정 — 눈 없이 시작 %d · 못 본 채 이어짐 %d%s' % (
+        len(starts), len(ends), len(unsighted), len(blind), '' if not (unsighted or blind) else '  ← 0이어야 함'))
+    open_at, lengths, lost = {}, [], []
+    for e in sorted(starts + ends, key=lambda x: x['t']):
+        if e['type'] == 'chase_start':
+            open_at[e['actor']] = e['t']
+        elif e['actor'] in open_at:
+            lengths.append(e['t'] - open_at.pop(e['actor']))
+            for part in e.get('detail', '').split(';'):
+                if part.startswith('lost='):
+                    lost.append(float(part[5:]))
+    reuse = []
+    last_end = {}
+    for e in sorted(starts + ends, key=lambda x: x['t']):
+        if e['type'] == 'chase_end':
+            last_end[e['actor']] = e['t']
+        elif e['actor'] in last_end:
+            reuse.append(e['t'] - last_end.pop(e['actor']))
+    sides = Counter(contact_side(tr, e) for e in starts)
+    total = max(1, sum(v for k, v in sides.items() if k != '?'))
+    ordered = sorted(starts, key=lambda x: x['t'])
+    variety = []
+    for i, e in enumerate(ordered):
+        window = {contact_side(tr, x) for x in ordered[i:] if x['t'] - e['t'] <= 8} - {'?'}
+        if len([x for x in ordered[i:] if x['t'] - e['t'] <= 8]) >= 2:
+            variety.append(len(window))
+    avg = lambda xs: (sum(xs) / len(xs)) if xs else 0
+    print('  한 추격 평균 %.1f초 · 시야 끊김 → 끝 평균 %.1f초 · 같은 몬스터 재등장 평균 %.0f초(%d번)' % (
+        avg(lengths), avg(lost), avg(reuse), len(reuse)))
+    print('  처음 마주친 방향: 앞 %d · 옆 %d · 뒤 %d (앞·옆 %d%%) · 8초 안 방향 가짓수 평균 %.1f' % (
+        sides['앞'], sides['옆'], sides['뒤'], 100 * (sides['앞'] + sides['옆']) // total, avg(variety)))
+    codes = Counter(decision_code(e) for e in tr.events if e['type'] == 'decision')
+    print('  길목: 배정 %d · 길목에서 만남 %d · 기다리다 둘레로 %d · 길목 사라짐 %d · 감전으로 연 길 %d · 예측 버림/낮춤 %d/%d · 재배치 %d · 소리 확인 %d' % (
+        codes['stage_assign'], codes['stage_engage'], codes['stage_timeout'], codes['stage_drop'], codes['stun_opening'],
+        codes['prediction_reset'], codes['prediction_drop'], codes['relocate'], codes['noise_call']))
 
 
 def ring_report(tr):

@@ -79,7 +79,7 @@ public sealed class PlaytestRecorder : MonoBehaviour
     [Serializable] private class Header
     {
         public string kind = "header", schema = "pico-playtest-v2", utc, scene, unity;
-        public string aiPolicy = "two-brains-exit-net-2026-09-26";
+        public string aiPolicy = "two-brains-stage-2026-09-26";
         public float sampleInterval = .1f;
         public Vector3 start, portal;
         public int targetGoal;

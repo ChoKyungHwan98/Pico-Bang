@@ -60,11 +60,6 @@ public class Target : MonoBehaviour
 		// 파괴음은 과녁 자리에서 난다 — 플레이어 위치가 아니다.
 		// 덕분에 "멀리 있는 과녁을 쏴서 몬스터를 유인한다"는 수가 성립한다.
 		NoiseSystem.Emit(base.transform.position, destroyNoiseRadius, NoiseKind.TargetDestroyed);
-		if (hasShotContext)
-		{
-			MonsterDirector director = MonsterDirector.Instance;
-			if (director != null) { director.ReportTargetAlarm(shotPosition, shotTime); }
-		}
 
 		if (hitEffectPrefab != null)
 		{

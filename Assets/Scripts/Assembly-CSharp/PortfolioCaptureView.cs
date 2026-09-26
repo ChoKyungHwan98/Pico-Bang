@@ -284,7 +284,7 @@ public sealed class PortfolioCaptureView : MonoBehaviour
     }
 
     /// <summary>
-    /// 포위망: 출구(막힘 = 빨강 채운 점, 빔 = 초록 테두리), 둘레 순찰 자리(흐린 초록 원),
+    /// 포위: 길목(몬스터가 맡음 = 파랑 굵은 원, 빔 = 초록 원), 둘레 순찰 자리(흐린 초록 원),
     /// 재배치(옮기기 전 → 뒤, 흐려지는 점선).
     /// </summary>
     private void DrawNet(MonsterDirector director, float px)
@@ -292,15 +292,14 @@ public sealed class PortfolioCaptureView : MonoBehaviour
         int e = 0, r = 0, d = 0;
         if (director != null)
         {
-            if (director.IsHunting)
-                foreach (var exit in director.DebugExits)
-                {
-                    var mark = Pooled(exitMarks, e++, "Exit", true, 2);
-                    mark.startColor = mark.endColor = exit.blocked ? ChaseColor : PatrolColor;
-                    mark.widthMultiplier = (exit.blocked ? 4f : 2.5f) * px;
-                    Circle(mark, exit.point, 7f * px);
-                    mark.enabled = true;
-                }
+            foreach (var exit in director.DebugStages)
+            {
+                var mark = Pooled(exitMarks, e++, "Exit", true, 2);
+                mark.startColor = mark.endColor = exit.assigned ? DetourColors[0] : PatrolColor;
+                mark.widthMultiplier = (exit.assigned ? 4f : 2.5f) * px;
+                Circle(mark, exit.point, 7f * px);
+                mark.enabled = true;
+            }
             foreach (var pair in director.DebugRingSlots)
             {
                 if (pair.Key == null || pair.Key.CurrentState != MonsterAI.State.Patrol && pair.Key.CurrentState != MonsterAI.State.Return) continue;
@@ -373,11 +372,11 @@ public sealed class PortfolioCaptureView : MonoBehaviour
         for (int i = link; i < noiseLinks.Count; i++) noiseLinks[i].enabled = false;
     }
 
-    /// <summary>표시할 경로: 추격은 실제 이동 경로, 출구 막기는 감독이 준 경로, 자리 이동은 흐리게.</summary>
+    /// <summary>표시할 경로: 추격은 실제 이동 경로, 길목은 감독이 준 경로, 자리 이동은 흐리게.</summary>
     private Vector3[] RouteOf(MonsterAI monster, MonsterDirector director)
     {
         if (monster.IsInStun) return null;
-        if (monster.IsBlocking && director != null && director.DebugRoutes.TryGetValue(monster, out var block) && !monster.IsClosingIn)
+        if (monster.IsBlocking && director != null && director.DebugRoutes.TryGetValue(monster, out var block) && !monster.IsHolding)
             return block.corners;
         if (monster.CurrentState != MonsterAI.State.Chase && monster.CurrentState != MonsterAI.State.Return) return null;
         if (!agents.TryGetValue(monster, out var agent) || agent == null)
@@ -404,7 +403,7 @@ public sealed class PortfolioCaptureView : MonoBehaviour
         }
     }
 
-    /// <summary>이름표: 감독이 준 역할 + 몸의 상태. 예) "추격", "출구 · 출구로", "순찰".</summary>
+    /// <summary>이름표: 감독이 준 역할 + 몸의 상태. 예) "추격", "길목 · 길목에서 대기", "순찰".</summary>
     private static string Judgment(MonsterAI m, MonsterDirector director)
     {
         if (m.IsInStun) return "감전";
@@ -505,7 +504,7 @@ public sealed class PortfolioCaptureView : MonoBehaviour
         string legend =
             "<color=#" + Hex(PlayerColor) + ">● 나</color>  " +
             "<color=#" + Hex(ChaseColor) + ">● 추격</color>  " +
-            "<color=#" + Hex(DetourColors[0]) + ">● 출구 막기</color>  " +
+            "<color=#" + Hex(DetourColors[0]) + ">● 길목</color>  " +
             "<color=#" + Hex(ReturnColor) + ">● 자리 이동</color>  " +
             "<color=#" + Hex(PatrolColor) + ">● 순찰</color>  " +
             "<color=#" + Hex(SearchColor) + ">● 수색</color>  " +
