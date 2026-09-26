@@ -214,7 +214,6 @@ public class MonsterAI : MonoBehaviour
 
 	public float jumpHeight = 1.5f;
 
-	private const float HintInterval = 0.5f;
 	private const float SightFlickerGrace = 0.5f;
 	private const float TouchSightRange = 2f;
 	private const int MaxPathFailures = 3;
@@ -250,7 +249,6 @@ public class MonsterAI : MonoBehaviour
 	private bool lostSight;
 	private float lostSightAt;
 	private float budgetBeforeLoss;
-	private float nextHintTime;
 	private Vector3 cornerPos;
 	private float cornerTimer;
 	private bool checkingCorner;
@@ -433,19 +431,14 @@ public class MonsterAI : MonoBehaviour
 	//  감독의 명령
 	// ────────────────────────────────────────────────
 
-	/// <summary>추격: 보이면 플레이어에게 곧장, 안 보이면 known으로 가며 끈질김만큼 쫓는다.</summary>
+	/// <summary>직접 보고 있는 몬스터만 새 추격을 시작한다.</summary>
 	public void CommandChase(Vector3 known)
 	{
-		if (!CanTakeOrders) return;
+		if (!CanTakeOrders || !IsSeeingPlayer) return;
 		if (currentState == State.Chase) return;
 		lastKnownPos = cornerPos = known;
 		givingUp = checkingCorner = false;
 		ChangeState(State.Chase);
-		if (!IsSeeingPlayer)
-		{
-			// 보지 못한 채 추격을 받았다 — 곧바로 '놓친' 상태에서 시작해 끈질김이 흐른다
-			BeginLostSight();
-		}
 		agent.SetDestination(known);
 	}
 
@@ -612,8 +605,8 @@ public class MonsterAI : MonoBehaviour
 	}
 
 	/// <summary>
-	/// 추격. 보이면 정확한 위치로, 놓치면 동료가 아는 위치(감독의 힌트)로 끈질김만큼 더 쫓는다.
-	/// 놓칠 때마다 다음 끈질김이 줄어든다 — 모퉁이를 여러 번 돌면 결국 떨어져 나간다.
+	/// 추격. 보이면 정확한 위치로, 놓치면 자신이 마지막으로 본 자리까지만 간다.
+	/// 총소리나 다른 몬스터의 제보는 감독의 배치에 쓰이지만 이 몬스터의 추격 목적지를 바꾸지 않는다.
 	/// </summary>
 	private void ProcessChase(bool canSee)
 	{
@@ -644,16 +637,7 @@ public class MonsterAI : MonoBehaviour
 			agent.SetDestination(cornerPos);
 			return;
 		}
-		if (Time.time >= nextHintTime)
-		{
-			nextHintTime = Time.time + HintInterval;
-			if (Director != null && Director.TryGetPursuitHint(this, out Vector3 hint))
-			{
-				lastKnownPos = hint;
-				cornerPos = hint;
-			}
-			agent.SetDestination(lastKnownPos);
-		}
+		agent.SetDestination(cornerPos);
 	}
 
 	private void BeginLostSight()
@@ -668,16 +652,6 @@ public class MonsterAI : MonoBehaviour
 		float decay = Director != null ? Director.PersistenceDecay : persistenceDecay;
 		float min = Director != null ? Director.PersistenceMin : persistenceMin;
 		pursuitBudget = Mathf.Max(min, pursuitBudget * decay);
-		nextHintTime = 0f;
-	}
-
-	/// <summary>동료가 새로 본 위치를 알려주면 끈질김이 바닥나지 않게 조금 채운다.</summary>
-	public void RefreshPursuitEvidence(Vector3 position)
-	{
-		if (currentState != State.Chase || !lostSight) return;
-		lastKnownPos = cornerPos = position;
-		checkingCorner = false;
-		pursuitTimer = Mathf.Max(pursuitTimer, Director != null ? Director.PersistenceMin : persistenceMin);
 	}
 
 	private void GiveUpChase()

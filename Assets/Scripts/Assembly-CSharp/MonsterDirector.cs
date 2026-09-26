@@ -3,13 +3,13 @@ using UnityEngine;
 using UnityEngine.AI;
 
 /// <summary>
-/// 감독(뇌 2). 플레이어를 직접 보지 않고, 몬스터가 본 것·들은 것만으로 사냥 팀을 짠다.
+/// 감독(뇌 2). 현재 위치를 이용해 접촉을 준비하지만, 몬스터의 시각 인식이나 추격을 대신하지 않는다.
 ///
-/// 사냥 팀 = 추격 1 + 우회 최대 2 (huntTeamSize).
-/// - 추격: 처음 본 몬스터. 추격을 포기하거나 감전되면 팀에서 다른 몬스터가 이어받는다.
+/// 평상시에는 최대 3마리를 앞·옆 길로 보내고, 시각 발견 뒤에는 최대 huntTeamSize마리에게 역할을 준다.
+/// - 추격: 직접 본 몬스터만 시작한다. 놓친 몬스터는 자신이 마지막으로 본 자리까지만 간다.
 /// - 우회: 플레이어가 곧 도착할 곳의 옆·앞으로 돌아간다. 가까이서 보면 협공 추격으로 바뀐다.
 /// - 줄줄이 방지: 추격자 뒤를 같은 쪽에서 따라오면 반대쪽 우회로 돌린다(집으로 보내지 않는다).
-/// - 집으로 보내는 경우는 둘뿐: 사냥 끝(기억 만료), 인원 초과(가장 먼 몬스터). 가장 가까운 빈 구역으로 간다.
+/// - 집으로 보내는 경우: 사냥 끝, 인원 초과, 우회 실패·교대. 빈 구역으로 간다.
 /// 모든 판단은 <see cref="Decide"/>로 기록된다 — 플레이 기록(decision)과 포트폴리오 지도의 판단 목록.
 /// </summary>
 public class MonsterDirector : MonoBehaviour
@@ -289,14 +289,14 @@ public class MonsterDirector : MonoBehaviour
     /// <summary>수색(소리 확인·포기 뒤 둘러보기)이 끝났다.</summary>
     public void ReportSearchDone(MonsterAI m)
     {
-        if (hunting && roles.ContainsKey(m)) { nextPlan = 0f; nextFlankPlan[m] = 0f; return; }
+        if (roles.ContainsKey(m)) { nextPlan = 0f; nextFlankPlan[m] = 0f; return; }
         SendHome(m, false);
     }
 
     /// <summary>우회 지점에 도착해 둘러봤지만 못 찾았다.</summary>
     public void ReportFlankMissed(MonsterAI m)
     {
-        if (!hunting || !roles.ContainsKey(m))
+        if (!roles.ContainsKey(m))
         {
             SendHome(m, false);
             return;
@@ -348,7 +348,7 @@ public class MonsterDirector : MonoBehaviour
             m.CommandChase(player.position);
             return;
         }
-        if (hunting && roles.Count < TeamSize && DistanceToPlayer(m) <= RecruitRange)
+        if (roles.Count < TeamSize && DistanceToPlayer(m) <= RecruitRange)
         {
             SetRole(m, Role.Flank);
             Decide(m, "recovered_flank", "감전 풀림 → 빈자리 우회");
@@ -365,13 +365,6 @@ public class MonsterDirector : MonoBehaviour
         RemoveRole(m);
         if (m == lead) lead = null;
         nextPlan = 0f;
-    }
-
-    /// <summary>추격 중 놓쳤을 때 쫓아갈 곳: 무리가 아는 최신 위치.</summary>
-    public bool TryGetPursuitHint(MonsterAI m, out Vector3 hint)
-    {
-        hint = knownPosition;
-        return hunting && Time.time - knowledgeTime <= Memory;
     }
 
     /// <summary>
@@ -392,8 +385,7 @@ public class MonsterDirector : MonoBehaviour
         if (ignored || listeners.Count == 0) return;
         PlaytestRecorder.Record("noise_evidence", "player", position,
             kind + ":listeners=" + listeners.Count.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        // 사냥 팀이 들으면 위치 힌트만 새로 고친다(놓친 추격자가 소리 쪽으로 간다). 끈질김은 채우지 않는다 —
-        // 플레이어는 늘 쏘므로, 소리로 끈질김을 채우면 한 번 붙은 추격자를 절대 떨칠 수 없다
+        // 사냥 팀이 들으면 배치용 위치 힌트를 갱신한다. 시야를 잃은 개체의 추격 목적지는 바꾸지 않는다.
         bool teamHeard = false;
         foreach (var m in listeners) if (roles.ContainsKey(m)) { teamHeard = true; break; }
         if (hunting && teamHeard) Remember(position, false, null);
@@ -472,11 +464,8 @@ public class MonsterDirector : MonoBehaviour
     {
         knownPosition = point;
         knowledgeTime = Time.time;
-        if (!sight) return;   // 소리는 위치 힌트일 뿐 — 사냥 시작·끈질김은 눈으로 본 것만
+        if (!sight) return;   // 소리는 배치용 위치 힌트일 뿐 — 추격 시작·연장은 눈으로 본 것만
         if (!hunting) StartHunt(point);
-        foreach (var pair in roles)
-            if (pair.Key != null && pair.Key != source && pair.Key.CurrentState == MonsterAI.State.Chase)
-                pair.Key.RefreshPursuitEvidence(point);
     }
 
     private void UpdateHeading(Vector3 position)
@@ -502,9 +491,28 @@ public class MonsterDirector : MonoBehaviour
         if (player == null) player = GameObject.FindGameObjectWithTag("Player")?.transform;
         if (zones.Count == 0) BuildZones();
         if (Time.time >= nextSpread) { nextSpread = Time.time + 4f; SpreadPatrols(); }
-        if (!hunting) return;
+        if (!hunting)
+        {
+            // 감독은 실제 위치로 앞·옆의 준비 지점만 고른다. 개체의 시각 인식이나 추격 상태는 건드리지 않는다.
+            if (player != null && Time.time >= nextPlan) PlanAmbient();
+            return;
+        }
         if (Time.time - sightTime > Memory) { EndHunt(true); return; }
         if (Time.time >= nextPlan) Plan();
+    }
+
+    private void PlanAmbient()
+    {
+        nextPlan = Time.time + PlanInterval;
+        UpdateHeading(player.position);
+        knownPosition = player.position;
+        knowledgeTime = Time.time;
+        CleanRoles();
+        RotateFlanks();
+        FillFlanks(3);
+        UpdateFlankGoals();
+        ApplySpeeds();
+        RebuildDebug();
     }
 
     private void Plan()
@@ -542,40 +550,26 @@ public class MonsterDirector : MonoBehaviour
         }
     }
 
-    /// <summary>추격자가 없으면 세운다: 지금 보고 있는 팀원 → 추격 중인 팀원 → 가장 가까운 우회 → 가장 가까운 자유 몬스터.</summary>
+    /// <summary>추격자가 없을 때 직접 보고 있는 팀원만 새 추격자로 세운다.</summary>
     private void EnsureLead()
     {
         if (lead != null && roles.ContainsKey(lead) && lead.CurrentState == MonsterAI.State.Chase && !lead.IsGivingUp) return;
         MonsterAI best = null;
         float bestDistance = float.PositiveInfinity;
-        int bestRank = 9;
         foreach (var pair in roles)
         {
             var m = pair.Key;
-            if (m == null || !m.CanTakeOrders || m.IsGivingUp) continue;
-            int rank = m.IsSeeingPlayer ? 0 : m.CurrentState == MonsterAI.State.Chase ? 1 : 2;
+            if (m == null || !m.CanTakeOrders || m.IsGivingUp || !m.IsSeeingPlayer) continue;
             float d = DistanceToPlayer(m);
-            if (rank < bestRank || (rank == bestRank && d < bestDistance)) { best = m; bestRank = rank; bestDistance = d; }
+            if (d < bestDistance) { best = m; bestDistance = d; }
         }
-        string why;
-        if (best != null)
-        {
-            why = bestRank == 0 ? "보고 있음" : bestRank == 1 ? "추격 중" : "가장 가까운 팀원";
-        }
-        else
-        {
-            // 팀 밖 몬스터를 새 추격자로 부르는 건 방금(2초 안) 누가 봤을 때만 — 소리만으로는 부르지 않는다
-            if (Time.time - sightTime > 2f) return;
-            best = NearestFree(knownPosition, out float length);
-            if (best == null) return;
-            why = "가장 가까운 몬스터 (길 " + length.ToString("F0") + "m)";
-        }
+        if (best == null) { lead = null; return; }
         var previous = lead;
         lead = best;
         if (previous != null && previous != best && roles.ContainsKey(previous)) SetRole(previous, Role.Assist);
         SetRole(best, Role.Lead);
-        if (best.CurrentState != MonsterAI.State.Chase) best.CommandChase(knownPosition);
-        Decide(best, "lead_assigned", "추격자 " + (previous != null && previous != best ? "교대 (" + Short(previous) + " → " + Short(best) + ")" : "지정") + " · " + why);
+        if (best.CurrentState != MonsterAI.State.Chase) best.CommandChase(player != null ? player.position : sightPosition);
+        Decide(best, "lead_assigned", "추격자 " + (previous != null && previous != best ? "교대 (" + Short(previous) + " → " + Short(best) + ")" : "지정") + " · 직접 보고 있음");
     }
 
     /// <summary>
@@ -618,7 +612,7 @@ public class MonsterDirector : MonoBehaviour
             foreach (var m in chasers)
             {
                 if (m == lead || !m.IsSeeingPlayer || !QueuesBehind(lead, m)) continue;
-                if (Time.time - leadChangedAt < 2f || DistanceToPlayer(m) + 3f >= DistanceToPlayer(lead)) continue;
+                if (Time.time - leadChangedAt < 2f || DistanceToPlayer(m) + 1.5f >= DistanceToPlayer(lead)) continue;
                 var old = lead;
                 SetRole(old, Role.Assist);
                 SetRole(m, Role.Lead);
@@ -694,30 +688,34 @@ public class MonsterDirector : MonoBehaviour
     /// 빈 우회 자리를 채운다. 가장 가까운 몬스터가 아니라 "플레이어 옆·앞으로 가는 길이 있는" 몬스터 중 가장 빨리 닿는 몬스터.
     /// 뒤에서만 올 수 있는 몬스터를 부르면 줄줄이가 되므로 부르지 않는다(최대 거리 flankRecruitRange).
     /// </summary>
-    private void FillFlanks()
+    private void FillFlanks(int desiredCount = -1)
     {
-        if (roles.Count >= TeamSize) return;
-        // 3초 넘게 아무도 못 보고 못 들었으면 새로 부르지 않는다 — 오래된 위치로 몰려가 봐야 헛걸음이다
-        if (Time.time - sightTime > 3f) return;
+        int limit = desiredCount < 0 ? TeamSize : Mathf.Min(TeamSize, desiredCount);
+        if (roles.Count >= limit) return;
+        // 사냥 중에는 최근 목격·소리, 평상시에는 감독의 현재 위치 관찰만 준비 이동에 쓴다.
+        if (hunting && Time.time - Mathf.Max(sightTime, knowledgeTime) > 3f) return;
         var candidates = BuildCandidates(Settings, PredictedPosition());
         if (candidates.Count == 0) return;
-        while (roles.Count < TeamSize)
+        while (roles.Count < limit)
         {
             MonsterAI best = null;
             FlankChoice bestChoice = default;
             bestChoice.score = float.PositiveInfinity;
-            foreach (var m in MonsterAI.activeMonsters)
+            // 서로 다른 방향의 자리를 먼저 찾고, 없을 때만 간격 조건을 완화한다.
+            for (int relax = 0; relax <= 1 && best == null; relax++)
             {
-                if (m == null || roles.ContainsKey(m) || !m.CanTakeOrders || m.IsGivingUp) continue;
-                if (benchUntil.TryGetValue(m, out float until) && Time.time < until) continue;
-                if (Vector3.Distance(m.transform.position, knownPosition) > RecruitRange) continue;
-                if (!TryChooseFlank(m, candidates, 1, out var choice)) continue;
-                // 구역을 비우지 않는 몬스터를 먼저: 전역 몬스터(구역 없음), 플레이어가 자기 구역 안에 있는 몬스터.
-                // 먼 구역 몬스터를 끌어오면 그 구역이 비어 맵이 한쪽으로 몰린다
-                float drain = m.role == MonsterAI.MonsterRole.Global_Stalker || m.useGlobalNavMesh ? -1f
-                    : m.zoneCenter != null && Vector3.Distance(knownPosition, m.zoneCenter.position) <= m.zoneRadius + 15f ? 0f : 2.5f;
-                choice.score += drain;
-                if (choice.score < bestChoice.score) { best = m; bestChoice = choice; }
+                foreach (var m in MonsterAI.activeMonsters)
+                {
+                    if (m == null || roles.ContainsKey(m) || !m.CanTakeOrders || m.IsGivingUp) continue;
+                    if (benchUntil.TryGetValue(m, out float until) && Time.time < until) continue;
+                    if (Vector3.Distance(m.transform.position, knownPosition) > RecruitRange) continue;
+                    if (!TryChooseFlank(m, candidates, relax, out var choice)) continue;
+                    // 구역을 비우지 않는 몬스터를 먼저: 전역 몬스터(구역 없음), 플레이어가 자기 구역 안에 있는 몬스터.
+                    float drain = m.role == MonsterAI.MonsterRole.Global_Stalker || m.useGlobalNavMesh ? -1f
+                        : m.zoneCenter != null && Vector3.Distance(knownPosition, m.zoneCenter.position) <= m.zoneRadius + 15f ? 0f : 2.5f;
+                    choice.score += drain;
+                    if (choice.score < bestChoice.score) { best = m; bestChoice = choice; }
+                }
             }
             if (best == null) break;
             SetRole(best, Role.Flank);
@@ -885,6 +883,13 @@ public class MonsterDirector : MonoBehaviour
             if (PassesNear(path, playerAt, throughPlayer)) continue;
             float eta = length / FarSpeed;
             float score = eta;
+            // 달리는 방향 뒤에 세우면 결국 한 줄 추격이 된다. 앞·옆 연결로를 우선한다.
+            if (Time.time - headingTime <= 2f && heading.sqrMagnitude > .01f)
+            {
+                float forward = Vector3.Dot(bearing.normalized, heading);
+                if (forward < -.25f) score += 4f;
+                else if (forward > .3f) score -= 1f;
+            }
             if (side != 0 && SideOf(c.point) != side) score += 3f;
             if (hasCurrent && Vector3.Distance(c.point, current) > 6f) score += 1.5f;
             if (score < choice.score) { choice.score = score; choice.path = (Vector3[])path.Clone(); choice.eta = eta; }
