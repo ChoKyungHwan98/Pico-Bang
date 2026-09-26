@@ -433,10 +433,9 @@ public class AITestDebug : MonoBehaviour
 		ml.body.startColor = ml.body.endColor = c;
 		SetCircle(ml.body, pos, 1.8f);
 
-		// 둘레 순찰 자리(감독이 준 자리 근처를 걷는다)
-		bool hasSlot = m.CurrentState == MonsterAI.State.Patrol || m.CurrentState == MonsterAI.State.Return;
-		ml.zone.enabled = hasSlot;
-		if (hasSlot) { SetCircle(ml.zone, m.PatrolCenter, 10f); }
+		bool hasZone = m.role == MonsterAI.MonsterRole.Zone_Defender && m.zoneCenter != null && !m.useGlobalNavMesh;
+		ml.zone.enabled = hasZone;
+		if (hasZone) { SetCircle(ml.zone, m.zoneCenter.position, m.zoneRadius); }
 
 		SetCircle(ml.hearing, pos, m.EffectiveHearingRange);
 
@@ -459,8 +458,8 @@ public class AITestDebug : MonoBehaviour
 		ml.dest.startColor = ml.dest.endColor = dc;
 		SetSegment(ml.dest, pos, m.DebugDestination);
 
-		ml.intercept.enabled = m.IsBlocking;
-		if (m.IsBlocking) { SetCircle(ml.intercept, m.BlockGoal, 2.5f); }
+		ml.intercept.enabled = m.IsFlanking;
+		if (m.IsFlanking) { SetCircle(ml.intercept, m.FlankGoal, 2.5f); }
 	}
 
 	/// <summary>감독이 준 우회 목표 지점(보라 원).</summary>
@@ -553,7 +552,7 @@ public class AITestDebug : MonoBehaviour
 		case MonsterAI.State.Investigate: return m.StateLabel == "수색 이동" ? new Color(1f, 0.6f, 0.1f) : SearchColor;
 		case MonsterAI.State.Return: return new Color(0.3f, 0.8f, 1f);
 		case MonsterAI.State.Stun: return Color.white;
-		case MonsterAI.State.Block: return CutColor;
+		case MonsterAI.State.Flank: return CutColor;
 		case MonsterAI.State.Idle: return new Color(.6f, .6f, .6f);
 		}
 		return Color.gray;
@@ -644,7 +643,7 @@ public class AITestDebug : MonoBehaviour
 				foreach (MonsterAI t in d.DebugTeam) { if (t != null) { names.Add(t.name.Replace("Monster_", "")); } }
 				hunt = "사냥 팀 " + string.Join(", ", names);
 			}
-			sb.Append("<b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (보면 추격, 못 보면 본 자리까지만 · 나머지는 길목·둘레)");
+			sb.Append("<b>" + hunt + "</b> · 추격 중 <b>" + d.DebugChaserCount + "</b>마리 (추격 1 + 우회 최대 2)");
 			if (d.HasSighting)
 			{
 				sb.Append(" · 마지막 목격 <b>" + d.SightingAge.ToString("F1") + "초 전</b> (" + d.SightingSpotterName.Replace("Monster_", "") + ")");
@@ -662,7 +661,7 @@ public class AITestDebug : MonoBehaviour
 				+ (route.Length > 0 ? "  <b>" + route + "</b>" : ""));
 		}
 		sb.Append("<color=#8CD98C>순찰</color> <color=#FF9A1A>이동</color> <color=#FFE633>수색</color> <color=#FF4040>추격</color> "
-			+ "<color=#D966FF>길목</color> <color=#4DCCFF>자리 이동</color> 기절 · Scene뷰: 색선=배정 경로, 큰원=경유지, 머리위원=최종접근, 플레이어둘레원=겹침제외 · ov=겹침률");
+			+ "<color=#D966FF>우회</color> <color=#4DCCFF>복귀</color> 기절 · Scene뷰: 색선=배정 경로, 큰원=경유지, 머리위원=최종접근, 플레이어둘레원=겹침제외 · ov=겹침률");
 		GUI.Box(new Rect(10, 10, 640, 80 + MonsterAI.activeMonsters.Count * 20 + 20), sb.ToString(), panelStyle);
 	}
 

@@ -47,16 +47,6 @@ public sealed class PortfolioCaptureView : MonoBehaviour
     private readonly Dictionary<MonsterAI, NavMeshAgent> agents = new Dictionary<MonsterAI, NavMeshAgent>();
     private readonly List<LineRenderer> noiseRings = new List<LineRenderer>();
     private readonly List<LineRenderer> noiseLinks = new List<LineRenderer>();
-    private readonly List<LineRenderer> exitMarks = new List<LineRenderer>();
-    private readonly List<LineRenderer> ringMarks = new List<LineRenderer>();
-    private readonly List<LineRenderer> relocateDashes = new List<LineRenderer>();
-
-    private struct Relocation
-    {
-        public Vector3 from, to;
-        public float time;
-    }
-    private readonly List<Relocation> relocations = new List<Relocation>();
     private LineRenderer playerMarker, playerOutline, playerHeading;
     private Transform player;
     private float overlayY;
@@ -84,20 +74,12 @@ public sealed class PortfolioCaptureView : MonoBehaviour
     {
         MonsterDirector.NoiseReported += OnNoise;
         MonsterDirector.DecisionMade += OnDecision;
-        MonsterDirector.Relocated += OnRelocated;
     }
 
     private void OnDisable()
     {
         MonsterDirector.NoiseReported -= OnNoise;
         MonsterDirector.DecisionMade -= OnDecision;
-        MonsterDirector.Relocated -= OnRelocated;
-    }
-
-    private void OnRelocated(MonsterAI monster, Vector3 from, Vector3 to)
-    {
-        relocations.Add(new Relocation { from = from, to = to, time = Time.time });
-        if (relocations.Count > 4) relocations.RemoveAt(0);
     }
 
     private void OnNoise(MonsterDirector.NoiseReport report)
@@ -280,59 +262,6 @@ public sealed class PortfolioCaptureView : MonoBehaviour
             playerHeading.SetPosition(1, Lift(player.position + forward.normalized * 22f * px));
         }
         DrawNoise(px);
-        DrawNet(director, px);
-    }
-
-    /// <summary>
-    /// 포위: 길목(몬스터가 맡음 = 파랑 굵은 원, 빔 = 초록 원), 둘레 순찰 자리(흐린 초록 원),
-    /// 재배치(옮기기 전 → 뒤, 흐려지는 점선).
-    /// </summary>
-    private void DrawNet(MonsterDirector director, float px)
-    {
-        int e = 0, r = 0, d = 0;
-        if (director != null)
-        {
-            foreach (var exit in director.DebugStages)
-            {
-                var mark = Pooled(exitMarks, e++, "Exit", true, 2);
-                mark.startColor = mark.endColor = exit.assigned ? DetourColors[0] : PatrolColor;
-                mark.widthMultiplier = (exit.assigned ? 4f : 2.5f) * px;
-                Circle(mark, exit.point, 7f * px);
-                mark.enabled = true;
-            }
-            foreach (var pair in director.DebugRingSlots)
-            {
-                if (pair.Key == null || pair.Key.CurrentState != MonsterAI.State.Patrol && pair.Key.CurrentState != MonsterAI.State.Return) continue;
-                var mark = Pooled(ringMarks, r++, "RingSlot", true, 1);
-                Color c = PatrolColor;
-                c.a = .35f;
-                mark.startColor = mark.endColor = c;
-                mark.widthMultiplier = 2f * px;
-                Circle(mark, pair.Value, 10f);
-                mark.enabled = true;
-            }
-        }
-        relocations.RemoveAll(x => Time.time - x.time > 4f);
-        foreach (var x in relocations)
-        {
-            Color c = Color.white;
-            c.a = Mathf.Clamp01(1f - (Time.time - x.time) / 4f);
-            Vector3 step = x.to - x.from;
-            int dashes = Mathf.Clamp(Mathf.RoundToInt(step.magnitude / 6f), 2, 30);
-            for (int i = 0; i < dashes; i += 2)
-            {
-                var dash = Pooled(relocateDashes, d++, "Relocate", false, 3);
-                dash.startColor = dash.endColor = c;
-                dash.widthMultiplier = 2.5f * px;
-                dash.positionCount = 2;
-                dash.SetPosition(0, Lift(x.from + step * i / dashes));
-                dash.SetPosition(1, Lift(x.from + step * (i + 1) / dashes));
-                dash.enabled = true;
-            }
-        }
-        for (int i = e; i < exitMarks.Count; i++) exitMarks[i].enabled = false;
-        for (int i = r; i < ringMarks.Count; i++) ringMarks[i].enabled = false;
-        for (int i = d; i < relocateDashes.Count; i++) relocateDashes[i].enabled = false;
     }
 
     /// <summary>총소리: 쏜 자리에서 소리 반경까지 퍼지는 원 + 들은 몬스터로 이어지는 선. 아무도 못 들으면 회색.</summary>
@@ -372,12 +301,12 @@ public sealed class PortfolioCaptureView : MonoBehaviour
         for (int i = link; i < noiseLinks.Count; i++) noiseLinks[i].enabled = false;
     }
 
-    /// <summary>표시할 경로: 추격은 실제 이동 경로, 길목은 감독이 준 경로, 자리 이동은 흐리게.</summary>
+    /// <summary>표시할 경로: 추격은 실제 이동 경로, 우회는 감독이 준 우회 경로, 복귀는 흐리게.</summary>
     private Vector3[] RouteOf(MonsterAI monster, MonsterDirector director)
     {
         if (monster.IsInStun) return null;
-        if (monster.IsBlocking && director != null && director.DebugRoutes.TryGetValue(monster, out var block) && !monster.IsHolding)
-            return block.corners;
+        var tactical = monster.DebugFlankRoute;
+        if (tactical != null) return tactical;
         if (monster.CurrentState != MonsterAI.State.Chase && monster.CurrentState != MonsterAI.State.Return) return null;
         if (!agents.TryGetValue(monster, out var agent) || agent == null)
             agents[monster] = agent = monster.GetComponent<NavMeshAgent>();
@@ -392,7 +321,7 @@ public sealed class PortfolioCaptureView : MonoBehaviour
         switch (m.CurrentState)
         {
         case MonsterAI.State.Chase: return ChaseColor;
-        case MonsterAI.State.Block:
+        case MonsterAI.State.Flank:
             if (director != null && director.DebugRoutes.TryGetValue(m, out var route) && route.colorIndex >= 2)
                 return DetourColors[1];
             return DetourColors[0];
@@ -403,7 +332,7 @@ public sealed class PortfolioCaptureView : MonoBehaviour
         }
     }
 
-    /// <summary>이름표: 감독이 준 역할 + 몸의 상태. 예) "추격", "길목 · 길목에서 대기", "순찰".</summary>
+    /// <summary>이름표: 감독이 준 역할 + 몸의 상태. 예) "추격 · 추적 1.4초", "우회", "순찰".</summary>
     private static string Judgment(MonsterAI m, MonsterDirector director)
     {
         if (m.IsInStun) return "감전";
@@ -473,9 +402,6 @@ public sealed class PortfolioCaptureView : MonoBehaviour
         foreach (var line in markers.Values) if (line != null) line.enabled = value;
         foreach (var line in noiseRings) if (line != null) line.enabled = value;
         foreach (var line in noiseLinks) if (line != null) line.enabled = value;
-        foreach (var line in exitMarks) if (line != null) line.enabled = value;
-        foreach (var line in ringMarks) if (line != null) line.enabled = value;
-        foreach (var line in relocateDashes) if (line != null) line.enabled = value;
     }
 
     private static string Hex(Color c) => ColorUtility.ToHtmlStringRGB(c);
@@ -503,9 +429,9 @@ public sealed class PortfolioCaptureView : MonoBehaviour
             : "전술 지도  |  순찰 중";
         string legend =
             "<color=#" + Hex(PlayerColor) + ">● 나</color>  " +
-            "<color=#" + Hex(ChaseColor) + ">● 추격</color>  " +
-            "<color=#" + Hex(DetourColors[0]) + ">● 길목</color>  " +
-            "<color=#" + Hex(ReturnColor) + ">● 자리 이동</color>  " +
+            "<color=#" + Hex(ChaseColor) + ">● 추격·협공</color>  " +
+            "<color=#" + Hex(DetourColors[0]) + ">● 우회</color>  " +
+            "<color=#" + Hex(ReturnColor) + ">● 복귀</color>  " +
             "<color=#" + Hex(PatrolColor) + ">● 순찰</color>  " +
             "<color=#" + Hex(SearchColor) + ">● 수색</color>  " +
             "<color=#" + Hex(IdleColor) + ">● 멈춤</color>";
